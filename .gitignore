@@ -7,11 +7,16 @@ user_XNAT.txt
 user_OSF.txt
 build/*
 
+
 ### package builds
 .venv/*
+.repo-e/*
+.vscode
 docs/build
 tests/tmp/*
 tests/export/*
+dbdicom-package
+
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
