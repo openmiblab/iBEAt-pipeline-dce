@@ -5,6 +5,7 @@ import os
 import dbdicom as db
 import pandas as pd
 
+#Helper: Plot Max Intensity Projection 
 def plot_mip_mosaic(images, destpath):
     n_cases = len(images)
     if n_cases == 0:
@@ -47,7 +48,7 @@ def plot_mip_mosaic(images, destpath):
     plt.close()
     print(f"Saved MIP mosaic {mosaic_path}")
 
-
+# Helper: Plot AIF 
 def plot_aif_mosaic(folder_path, destpath):
     # List all CSV files
     csv_files = [f for f in os.listdir(folder_path) if f.endswith("_aif.csv")]
@@ -85,7 +86,9 @@ def plot_aif_mosaic(folder_path, destpath):
     plt.close()
     print(f"Saved AIF mosaic {out_path}")
 
+# Main Protocol 
 def Bari():
+    #load directories and databases
     datapath = os.path.join(os.getcwd(), 'build', 'dce_3_mip')
     imgpath = os.path.join(datapath, "Bari", "Patients")
     
@@ -102,62 +105,13 @@ def Bari():
     images = []
     for study in DCE_mip:
         case_id = study[1]   # patient/study ID
-        array = db.pixel_data(study)
-        images.append((case_id, array))
+        array = db.pixel_data(study) #extract pixel data
+        images.append((case_id, array)) 
 
     # Plot *one mosaic* with all cases
     plot_mip_mosaic(images, destpath)
     plot_aif_mosaic(csvpath, destpath)
 
-def Leeds():
-    datapath = os.path.join(os.getcwd(), 'build', 'dce_3_mip')
-    imgpath = os.path.join(datapath, "Leeds", "Patients")
-
-    csvpath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', "Leeds", "Patients")
-    
-    dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_6_checkpoint')
-    destpath =  os.path.join(dstdatapath, "Leeds", "Patients")
-    os.makedirs(destpath, exist_ok=True)
-
-    imgdatabase = db.series(imgpath)
-    DCE_mip = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_3_mip']
-
-    # Collect all studies into one list
-    images = []
-    for study in DCE_mip:
-        case_id = study[1]   # patient/study ID
-        array = db.pixel_data(study)
-        images.append((case_id, array))
-
-    # Plot *one mosaic* with all cases
-    plot_mip_mosaic(images, destpath)
-    plot_aif_mosaic(csvpath, destpath)
-
-def sheffield_patients():
-    datapath = os.path.join(os.getcwd(), 'build', 'dce_3_mip')
-    imgpath = os.path.join(datapath, "Sheffield", "Patients")
-
-    csvpath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', "Sheffield", "Patients")
-    
-    dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_6_checkpoint')
-    destpath =  os.path.join(dstdatapath, "Sheffield", "Patients")
-    os.makedirs(destpath, exist_ok=True)
-
-    imgdatabase = db.series(imgpath)
-    DCE_mip = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_3_mip']
-
-    # Collect all studies into one list
-    images = []
-    for study in DCE_mip:
-        case_id = study[1]   # patient/study ID
-        array = db.pixel_data(study)
-        images.append((case_id, array))
-
-    # Plot *one mosaic* with all cases
-    #plot_mip_mosaic(images, destpath)
-    plot_aif_mosaic(csvpath, destpath)
-
+# Call Task
 if __name__ == '__main__':
-    # Bari()
-    #Leeds()
-    sheffield_patients()
+    Bari()
