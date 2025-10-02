@@ -2,6 +2,7 @@ import numpy as np
 import os
 import logging
 import dbdicom as db
+from tqdm import tqdm
 
 # List of patients to exclude
 EXCLUDE = []
@@ -39,7 +40,7 @@ def Bari():
     database = db.series(sitedatapath)
     DCE_axial_aorta = [entry for entry in database if entry[3][0].strip().lower() == 'dce_1_aorta'.lower()]
     pat_series = []
-    for study in DCE_axial_aorta:
+    for study in tqdm(DCE_axial_aorta, desc='Proceesing MIP', unit='case'):
         try:
             #create folder
             series_name = bari_add_series_name(study[1], pat_series)

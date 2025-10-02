@@ -1,6 +1,11 @@
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 
+### python files
+inspect_pickle.py
+test_api.py
+
+
 ### password
 user_TOTSEG.txt
 user_XNAT.txt
@@ -11,6 +16,7 @@ build/*
 ### package builds
 .venv/*
 .repo-e/*
+.repo
 .vscode
 docs/build
 tests/tmp/*
