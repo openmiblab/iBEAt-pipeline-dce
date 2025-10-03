@@ -54,12 +54,12 @@ def load_aif(site):
         aif_values.append((case_id, times, aif))
     return aif_values
 
-def rebuild_moco_table(site, case_id=None, checkpoint_dir=None, iteration=int):
+def rebuild_moco_table(site, batch_no=None, case_id=None, checkpoint_dir=None, iteration=int):
     if checkpoint_dir is None:
         checkpoint_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients", case_id, 'Checkpoint')
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    checkpoint_file = os.path.join(checkpoint_dir, f"{site}_moco_table.pkl")
+    checkpoint_file = os.path.join(checkpoint_dir, f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
     study_list = db.series(os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients"))
 
     moco_table = []
@@ -120,11 +120,11 @@ def rebuild_moco_table(site, case_id=None, checkpoint_dir=None, iteration=int):
     return moco_table
 
 # Step 1: Collect database 
-def dce_to_process(site):
+def dce_to_process(site, batch_no=None):
     # Define directories
     save_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
     os.makedirs(save_dir, exist_ok=True)
-    pickle_path = os.path.join(save_dir, f"{site}_moco_table.pkl")
+    pickle_path = os.path.join(save_dir, f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
     data_dir = os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients")
 
 
@@ -186,10 +186,10 @@ def dce_to_process(site):
         print(f"Saved {case_id} for 3D MDREG to {site} folder")
       
         
-def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
+def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
 
 
-    mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 'Patients', f'{site}_moco_table.pkl')
+    mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 'Patients', f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
 
     if os.path.exists(mdr_table_path):
         with open(mdr_table_path, "rb") as f:
@@ -200,7 +200,7 @@ def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
     if end_case is None:
         end_case = len(mdr_table)
     
-    batch_table = mdr_table[start_case:end_case]
+    batch_table = mdr_table[start_case:end_case+1]
 
     first_case_id = batch_table[0]['case_id']
     last_case_id = batch_table[-1]['case_id']
@@ -224,7 +224,6 @@ def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
         # WORKING CASE - BEGIN MDREG
         study = entry['study']
         iteration = entry['iteration'] 
-        tqdm.write(f'Processing {case}, Iteration={iteration+1}')
         times_and_aif = load_aif(site)
         aif = next((v for v in times_and_aif if v[0] == case), None)
         time = aif[1].tolist()
@@ -232,7 +231,7 @@ def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
         
 
         if iteration == 0:
-            img_vol = db.volume(study[0], dims=['AcquisitionTime'])
+            img_vol = db.volume(study, dims=['AcquisitionTime'])
             array = img_vol.values
         
         if iteration >= maximum_it:
@@ -247,6 +246,7 @@ def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
             }
    
         for iter_num in range(iteration + 1, maximum_it + 1):
+            tqdm.write(f'Processing {case}, Iteration={iter_num}')
             # reload from previous iteration
             if iter_num > 1:
                 array = np.load(os.path.join(checkpoint_dir, f"{case}_coreg_iter_{iter_num-1}.npy"))
@@ -306,6 +306,6 @@ def _mdr_2d(site, maximum_it=5, start_case=0, end_case=None):
 
 
 if __name__ == '__main__':
-    dce_to_process('Bari')
-    _mdr_2d('Bari')
+    #dce_to_process('Bari', batch_no=None)
+    _mdr_2d('Bari', batch_no=None, start_case=None, end_case=5)
 
