@@ -229,10 +229,13 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
         time = aif[1].tolist()
         aif_values = aif[2].tolist()
         
-
-        if iteration == 0:
-            img_vol = db.volume(study, dims=['AcquisitionTime'])
-            array = img_vol.values
+        try:
+            if iteration == 0:
+                img_vol = db.volume(study, dims=['AcquisitionTime'])
+                array = img_vol.values
+        except Exception as e:
+            tqdm.write(f'Skipping case {case}. Cannot load volume. {e}')
+            continue
         
         if iteration >= maximum_it:
             tqdm.write(f"Case {case} already completed {maximum_it} iterations, skipping.")
@@ -301,11 +304,125 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
             tqdm.write(f"Case {case} checkpoint saved. Total completed: {iter_num}")    
         
 
+def _write_2_folder(site, batch_no=None):
+    mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 
+        'Patients', f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
+    
+    if os.path.exists(mdr_table_path):
+        with open(mdr_table_path, "rb") as f:
+            mdr_table = pickle.load(f)
+    else:
+        print('No existing MDR Table to process')
 
+    base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
+    os.makedirs(base_dir, exist_ok=True)
+    
+
+
+    for entry in tqdm(mdr_table, desc=f'Writing {site} cases to DICOM', unit='case'):
+        #case_id
+        case = entry['case_id']
+        tqdm.write(f'Processing case {case}...')
+        
+        #check for completed iterations
+        iteration = entry['iteration']
+        if iteration < 5:
+            print(f'Skipping case {case}. Model registration incomplete or in different batch. No of Iteration(s) = {iteration}.')
+            continue
+        
+        #load study and array paths to dynamic and moco image
+        study = entry["study"]  
+        paths = entry["paths"]
+
+        # series naming
+        pat_series = []
+        add_series_name(case, pat_series)
+
+        #locate last mdreg iteration
+        try:
+            # Helper to find last iteration file
+            def last_file(file_list):
+                for f in reversed(file_list):
+                    if os.path.exists(f):
+                        return f
+                return None
+
+            coreg_path = last_file(paths["coreg"])
+            defo_path = last_file(paths["defo"])
+            model_fit_path = last_file(paths["model_fit"])
+
+            if not coreg_path or not defo_path or not model_fit_path:
+                logging.warning(f"No completed iteration found for case {case}, skipping write.")
+                continue
+
+            # Load arrays
+            coreg = np.load(coreg_path)
+            model_fit = np.load(model_fit_path)
+            defo = np.load(defo_path)
+
+            # Extract metadata from image
+            # try:
+            image = db.volume(study, dims='AcquisitionTime')
+            if image is not None:
+                affine = image.affine
+                coords = image.coords
+
+            #_______________MOCO________________
+
+            #load series name and check if series exists in dest folder
+            database = [base_dir, case, ('Baseline', 0)]
+            mdr_clean = database + [(pat_series[-1] + "mdr_moco", 0)]
+            if mdr_clean in db.series(database):
+                continue
+
+            tqdm.write('Building MOCO DICOM...')
+            for z in range(coreg.shape[2]):
+                vol = coreg[:, :, z, :]
+                print(vol.shape)
+                if site == 'Bari':
+                    volume = vreg.volume(vol, affine, coords, dims=['AcquisitionTime'])
+                elif site == 'Leeds':
+                    volume = vreg.volume(vol, affine, coords, dims=['InstanceNumber'])
+                db.write_volume(volume, mdr_clean, ref=study, append=True)
+
+            #_______________DEFORMATION________________
+            database = [base_dir, case, ('Baseline', 0)]
+            defo_clean = database + [(pat_series[-1] + 'mdr_defo', 0)]
+            if defo_clean in db.series(database):
+                continue
+            tqdm.write('Building DEFO DICOM...')
+            model_defo = mdreg.defo_norm(defo, 'eumip')
+            db.write_volume((model_defo, affine), defo_clean, ref=study, append=True)
+
+            #_______________MODEL FIT________________
+            database = [base_dir, case, ('Baseline', 0)]
+            model_fit_clean = database + [(pat_series[-1] + "mdr_fit", 0)]
+            if model_fit_clean in db.series(database):
+                continue
+            
+            tqdm.write('Building MODEL FIT DICOM...')
+
+            for z in range(model_fit.shape[2]):
+                vol = model_fit[:, :, z, :]
+                print(vol.shape)
+                db.write_volume((vol, affine), model_fit_clean, ref=study, append=True)
+
+            logging.info(f"Case {case} written successfully.")
+
+            # keep final iteration and remove older arrays to save space 
+            for f_list in [paths["coreg"], paths["defo"], paths["model_fit"], paths["pars"]]:
+                last_f = last_file(f_list)
+                for f in f_list:
+                    if os.path.exists(f) and f != last_f:
+                        os.remove(f)
+
+        except Exception as e:
+            logging.error(f"Case {case} cannot be written: {e}")
 
 
 
 if __name__ == '__main__':
     #dce_to_process('Bari', batch_no=None)
-    _mdr_2d('Bari', batch_no=None, start_case=None, end_case=5)
+    #_mdr_2d('Bari', batch_no=None, start_case=None, end_case=5)
+    _write_2_folder('Bari')
 
