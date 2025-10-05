@@ -7,10 +7,8 @@ import mdreg
 import dcmri
 import dbdicom as db
 from tqdm import tqdm
-import os
-import numpy as np
-import pickle
 import vreg
+import re
 
 
 
@@ -54,70 +52,83 @@ def load_aif(site):
         aif_values.append((case_id, times, aif))
     return aif_values
 
-def rebuild_moco_table(site, batch_no=None, case_id=None, checkpoint_dir=None, iteration=int):
-    if checkpoint_dir is None:
-        checkpoint_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients", case_id, 'Checkpoint')
-    os.makedirs(checkpoint_dir, exist_ok=True)
 
-    checkpoint_file = os.path.join(checkpoint_dir, f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
+def rebuild_mdr_table(site, batch_no=None):
+    base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
     study_list = db.series(os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients"))
 
     moco_table = []
-    coreg_files = [f for f in os.listdir(checkpoint_dir) if "_coreg_iter" in f and f.endswith(".npy")]
-    cases_str = set(f.split("_coreg_iter")[0] for f in coreg_files)
 
-    for case_str in sorted(cases_str):
-        # Lookup study using the original string
-        study = next((s for s in study_list if s[1] == case_str), None)
-        if study is None:
-            print(f"Skipping case {case_str}, study not found in db.series.")
+    # Loop through all case folders
+    case_ids = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+
+    for case_id in case_ids:
+        checkpoint_dir = os.path.join(base_dir, case_id, 'Checkpoint')
+        if not os.path.exists(checkpoint_dir):
+            print(f"No checkpoint dir for {case_id}, skipping.")
             continue
-    
 
+        # Get all *_coreg_iterX.npy files for this case
+        coreg_files = [
+            f for f in os.listdir(checkpoint_dir)
+            if f.startswith(f"{case_id}_coreg_iter") and f.endswith(".npy")
+        ]
+        if not coreg_files:
+            print(f"No coreg files for {case_id}, skipping.")
+            continue
 
-        # Try to store case as int, fallback to string
-        try:
-            case = int(case_str)
-        except ValueError:
-            case = case_str
+        # Extract iteration numbers from filenames
+        iter_numbers = []
+        for f in coreg_files:
+            match = re.search(r"_iter_(\d+)\.npy$", f)
+            if match:
+                iter_numbers.append(int(match.group(1)))
 
+        if not iter_numbers:
+            print(f"No iteration numbers found for {case_id}, skipping.")
+            continue
+
+        # Last iteration = max number
+        last_iter = max(iter_numbers)
+
+        # Collect latest files for coreg, defo, model_fit, pars
         paths = {}
         for key in ["coreg", "defo", "model_fit", "pars"]:
             all_files = sorted([
                 os.path.join(checkpoint_dir, f) 
                 for f in os.listdir(checkpoint_dir) 
-                if f.startswith(f"{case_str}_{key}_iter")
+                if f.startswith(f"{case_id}_{key}_iter")
             ])
-            if not all_files:
-                paths[key] = []
-                continue
+            paths[key] = all_files[-1:] if all_files else []
 
-            # Keep only the last iteration file
-            last_file = all_files[-1]
-            paths[key] = [last_file]
-
-            # Delete older iterations
-            for f in all_files[:-1]:
-                os.remove(f)
-
-        # Skip cases without all last iteration files
+        # Require coreg, defo, model_fit to be present
         if not all(paths[k] for k in ["coreg", "defo", "model_fit"]):
-            print(f"Skipping case {case}, missing last iteration files.")
+            print(f"Skipping {case_id}, missing files for last iteration.")
+            continue
+
+        # Lookup study from db
+        study = next((s for s in study_list if s[1] == case_id), None)
+        if study is None:
+            print(f"Study not found for {case_id}, skipping.")
             continue
 
         moco_table.append({
-            "case": study[1],
+            "case_id": study[1],
             "study": study,
             "paths": paths,
-            'iter': iteration
+            "iteration": last_iter
         })
 
-    # Save rebuilt checkpoint
-    with open(checkpoint_file, "wb") as f:
+    # Save one global checkpoint for all cases
+    global_checkpoint = os.path.join(
+        base_dir,
+        f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl"
+    )
+    with open(global_checkpoint, "wb") as f:
         pickle.dump(moco_table, f)
 
-    print(f"Rebuilt moco_table with {len(moco_table)} cases, cleaned old iterations, and saved checkpoint.")
-    return moco_table
+    print(f"Rebuilt moco_table with {len(moco_table)} cases, saved to {global_checkpoint}")
+
 
 # Step 1: Collect database 
 def dce_to_process(site, batch_no=None):
@@ -304,7 +315,7 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
             tqdm.write(f"Case {case} checkpoint saved. Total completed: {iter_num}")    
         
 
-def _write_2_folder(site, batch_no=None):
+def write_2_folder(site, batch_no=None):
     mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 
         'Patients', f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
     
@@ -324,6 +335,21 @@ def _write_2_folder(site, batch_no=None):
         case = entry['case_id']
         tqdm.write(f'Processing case {case}...')
         
+        # series naming and check/skip if it already exists 
+        pat_series = []
+        add_series_name(case, pat_series)
+        database = [base_dir, case, ('Baseline', 0)]
+        mdr_clean = database + [(pat_series[-1] + "mdr_moco", 0)]
+        defo_clean = database + [(pat_series[-1] + 'mdr_defo', 0)]
+        model_fit_clean = database + [(pat_series[-1] + "mdr_fit", 0)]
+        
+        series = [mdr_clean, defo_clean, model_fit_clean]       
+        if all(x in db.series(database) for x in series):
+            print(f'Skipping case {case}. All MDREG DICOMs already in {site} folder')
+            continue
+
+
+        
         #check for completed iterations
         iteration = entry['iteration']
         if iteration < 5:
@@ -334,9 +360,7 @@ def _write_2_folder(site, batch_no=None):
         study = entry["study"]  
         paths = entry["paths"]
 
-        # series naming
-        pat_series = []
-        add_series_name(case, pat_series)
+
 
         #locate last mdreg iteration
         try:
@@ -357,11 +381,16 @@ def _write_2_folder(site, batch_no=None):
 
             # Load arrays
             coreg = np.load(coreg_path)
+            #print('coreg:', coreg.shape)
             model_fit = np.load(model_fit_path)
+            #print('mf:', model_fit.shape)
             defo = np.load(defo_path)
+            #print('defo:', defo.shape)
+            if model_fit.ndim > 5:
+                model_fit, defo = defo, model_fit
+                print(f'Checkpoint outputs Defo and Model fit are swapped for case {case}. Please Check. Switching...')
 
             # Extract metadata from image
-            # try:
             image = db.volume(study, dims='AcquisitionTime')
             if image is not None:
                 affine = image.affine
@@ -369,13 +398,7 @@ def _write_2_folder(site, batch_no=None):
 
             #_______________MOCO________________
 
-            #load series name and check if series exists in dest folder
-            database = [base_dir, case, ('Baseline', 0)]
-            mdr_clean = database + [(pat_series[-1] + "mdr_moco", 0)]
-            if mdr_clean in db.series(database):
-                continue
-
-            tqdm.write('Building MOCO DICOM...')
+            tqdm.write('Building MoCo...')
             for z in range(coreg.shape[2]):
                 vol = coreg[:, :, z, :]
                 print(vol.shape)
@@ -386,21 +409,12 @@ def _write_2_folder(site, batch_no=None):
                 db.write_volume(volume, mdr_clean, ref=study, append=True)
 
             #_______________DEFORMATION________________
-            database = [base_dir, case, ('Baseline', 0)]
-            defo_clean = database + [(pat_series[-1] + 'mdr_defo', 0)]
-            if defo_clean in db.series(database):
-                continue
-            tqdm.write('Building DEFO DICOM...')
+            tqdm.write('Building Defo...')
             model_defo = mdreg.defo_norm(defo, 'eumip')
             db.write_volume((model_defo, affine), defo_clean, ref=study, append=True)
 
             #_______________MODEL FIT________________
-            database = [base_dir, case, ('Baseline', 0)]
-            model_fit_clean = database + [(pat_series[-1] + "mdr_fit", 0)]
-            if model_fit_clean in db.series(database):
-                continue
-            
-            tqdm.write('Building MODEL FIT DICOM...')
+            tqdm.write('Building Model Fit...')
 
             for z in range(model_fit.shape[2]):
                 vol = model_fit[:, :, z, :]
@@ -422,7 +436,15 @@ def _write_2_folder(site, batch_no=None):
 
 
 if __name__ == '__main__':
-    #dce_to_process('Bari', batch_no=None)
-    #_mdr_2d('Bari', batch_no=None, start_case=None, end_case=5)
-    _write_2_folder('Bari')
+    #Step: 1 - Prep DCE
+    #dce_to_process('Bari')
+
+    #Step: 2 - 2D MDREG 
+    #_mdr_2d('Bari')
+
+    # Step 3 - Write Files to DICOM
+    write_2_folder('Bari')
+
+    #Optional - Recommended if running in batches, before writing files to DICOM
+    #rebuild_mdr_table('Bari')
 
