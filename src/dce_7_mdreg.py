@@ -398,28 +398,25 @@ def write_2_folder(site, batch_no=None):
 
             #_______________MOCO________________
 
-            tqdm.write('Building MoCo...')
-            for z in range(coreg.shape[2]):
-                vol = coreg[:, :, z, :]
-                print(vol.shape)
-                if site == 'Bari':
-                    volume = vreg.volume(vol, affine, coords, dims=['AcquisitionTime'])
-                elif site == 'Leeds':
-                    volume = vreg.volume(vol, affine, coords, dims=['InstanceNumber'])
+            tqdm.write('Building MoCo series...')
+            #vol = coreg 
+            if site == 'Bari':
+                volume = vreg.volume(coreg, affine, coords, dims=['AcquisitionTime'])
                 db.write_volume(volume, mdr_clean, ref=study, append=True)
 
+            # elif site == 'Leeds':
+            #     volume = vreg.volume(, affine, coords, dims=['InstanceNumber'])
+            #     db.write_volume(volume, mdr_clean, ref=study, append=True)
+
             #_______________DEFORMATION________________
-            tqdm.write('Building Defo...')
+            tqdm.write('Building Defo series...')
             model_defo = mdreg.defo_norm(defo, 'eumip')
             db.write_volume((model_defo, affine), defo_clean, ref=study, append=True)
 
             #_______________MODEL FIT________________
-            tqdm.write('Building Model Fit...')
+            tqdm.write('Building Model Fitting series...')
 
-            for z in range(model_fit.shape[2]):
-                vol = model_fit[:, :, z, :]
-                print(vol.shape)
-                db.write_volume((vol, affine), model_fit_clean, ref=study, append=True)
+            db.write_volume((model_fit, affine), model_fit_clean, ref=study, append=True)
 
             logging.info(f"Case {case} written successfully.")
 
@@ -442,9 +439,9 @@ if __name__ == '__main__':
     #Step: 2 - 2D MDREG 
     #_mdr_2d('Bari')
 
+    #Optional - Recommended if running in batches, before writing files to DICOM
+    rebuild_mdr_table('Bari')
+
     # Step 3 - Write Files to DICOM
     write_2_folder('Bari')
-
-    #Optional - Recommended if running in batches, before writing files to DICOM
-    #rebuild_mdr_table('Bari')
 
