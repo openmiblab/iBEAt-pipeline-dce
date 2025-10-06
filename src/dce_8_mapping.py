@@ -5,19 +5,24 @@ import numpy as np
 import pandas as pd
 import logging
 import vreg
+from tqdm import tqdm
 
 
-
+#Helper: Build series name 
 def add_series_name(folder, all_series: list):
     new_series_name = "DCE_8_"
     all_series.append(new_series_name)
     return new_series_name
 
-
+# Main Protocol
 def DCE(site):
-    #base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
-    base_dir = os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients")
+    
+    #data directories
+    data_dir = os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients")
+    base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
     aif_path = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', site, "Patients")
+
+    #save dir
     dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_8_mapping')
     destpath =  os.path.join(dstdatapath, site, "Patients")
     os.makedirs(destpath, exist_ok=True)
@@ -30,25 +35,30 @@ def DCE(site):
     format='%(asctime)s - %(levelname)s - %(message)s'
     )
     
+    #load mdr database 
     database = db.series(base_dir)
-    #DCE_mdr_moco = [entry for entry in database if entry[3][0].strip().lower() == 'dce_7_mdr_moco']
-    DCE_mdr_moco = [entry for entry in database if entry[3][0].strip().lower() == 'dce_1_kidneys']
+    DCE_mdr_moco = [entry for entry in database if entry[3][0].strip().lower() == 'dce_7_mdr_moco'.lower()]
 
     csv_files = [f for f in os.listdir(aif_path) if f.endswith("_aif.csv")]
     pat_series = []
-    for study in DCE_mdr_moco:
-        study_id = study[1]  #case ID
+    for study in tqdm(DCE_mdr_moco, desc=f'Creating Maps for {site}', unit='case'):
+        case_id = study[1]
         
         # find matching csv
-        aif_file = next((f for f in csv_files if study_id in f), None)
+        aif_file = next((f for f in csv_files if case_id in f), None)
+        
+        if aif_file == None:
+            tqdm.write(f'No AIF found for case {case_id}. Skipping') 
+            continue
+
 
         if aif_file:
             try:
 
                 
-                #create folder
-                series_name = add_series_name(study[1], pat_series)
-                baseline_path = [destpath, study[1], ('Baseline', 0)]
+                #create series name
+                series_name = add_series_name(case_id, pat_series)
+                baseline_path = [destpath, case_id, ('Baseline', 0)]
 
                 max_clean = baseline_path + [(series_name + "MAX_map", 0)] 
                 auc_clean = baseline_path + [(series_name + 'AUC_map', 0)]
@@ -67,31 +77,21 @@ def DCE(site):
                 ft_clean = baseline_path + [(series_name + 'FT_map', 0)]
                 tt_clean = baseline_path + [(series_name + 'TT_map', 0)]
 
-                #check + skip if files processed
+                #check + skip if all files are processed
                 series = [max_clean, auc_clean, att_clean, fit_clean, rpf_clean, avd_clean, mtt_clean, 
                           fp_clean, tp_clean, vp_clean, ft_clean, tt_clean]
                 
                 if all(x in db.series(baseline_path) for x in series):
                     continue
 
-                #load mdr_moco_dicom  #####TEMP FIX######
-                if site == 'Leeds':
-                    #array = np.load('build/dce_7_mdreg/Leeds/Patients/mdr_prep/4128_056_coreg_iter_5.npy')
-                    mdr_moco = db.split_series(study, 'ImagePositionPatient')
-                    mdr_moco = sorted(mdr_moco, key=lambda x: x[0])
-                    image_vol = []
-                    for _, x in mdr_moco:
-                        vol = db.volume(x, 'InstanceNumber')
-                        #vol = vreg.volume(x.values, x.affine)
-                        vol_array = vol.values.squeeze()
-                        image_vol.append(vol_array)
-                    array = np.stack(image_vol, axis=2)
-                    #array = np.transpose(array, (0, 1, 3, 2))
-                elif site == 'Bari':
+                #load mdr_moco_dicom 
+                if site == 'Bari':              
+                    # get array, affine coords from moco dce
                     vol = db.volume(study, dims=['AcquisitionTime'])
-                array = array
-                affine = vol.affine
-                coords = vol.coords
+                    array = vol.values
+                    affine = vol.affine
+                    coords = vol.coords
+
 
                 # load aif curve from csv
                 aif_data = pd.read_csv(os.path.join(aif_path, aif_file))
@@ -99,133 +99,132 @@ def DCE(site):
                 time = aif_data.iloc[:, 0].values
                 dt = np.mean(np.diff(time)) 
 
-                #calculating maps
+                # calculating maps
                 MAX, AUC, ATT, SO = dcmri.pixel_descriptives(array, aif, dt, baseline=15)
                 RPF, AVD, MTT = dcmri.pixel_deconvolve(array, aif, dt, baseline=15, regpar=0.1)
                 fit, par = dcmri.pixel_2cfm_linfit(array, aif, time, baseline=15)
               
                 if max_clean not in db.series(baseline_path):
                     try:
-                        print(f'Computing max map for {study_id}')
+                        tqdm.write(f'Computing MAX map for {case_id}')
                         MAX[MAX<0]=0
                         MAX[MAX>10000]=10000
                         db.write_volume((MAX, affine), max_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process MAX map for {study_id}: {e} ')
+                        logging.error(f'cannot process MAX map for {case_id}: {e} ')
                        
                 if auc_clean not in db.series(baseline_path):
                     try:
-                        print(f'Computing auc map for {study_id}')
+                        tqdm.write(f'Computing AUC map for {case_id}')
                         AUC[AUC<0]=0
                         AUC[AUC>10000]=10000
                         db.write_volume((AUC, affine), auc_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process AUC map for {study_id}: {e} ')
+                        logging.error(f'cannot process AUC map for {case_id}: {e} ')
                 
                 if att_clean not in db.series(baseline_path):   
                     
                     try:
-                        print(f'Computing att map for {study_id}')
+                        tqdm.write(f'Computing ATT map for {case_id}')
                         ATT[ATT<0]=0
                         ATT[ATT>10000]=10000
                         db.write_volume((ATT, affine), att_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process ATT map for {study_id}: {e} ')                         
+                        logging.error(f'cannot process ATT map for {case_id}: {e} ')                         
                 
                 if fit_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing fit map for {study_id}')
+                        tqdm.write(f'Computing FIT for {case_id}')
                         volume = vreg.volume(fit, affine, coords, dims=['AcquisitionTime'])
 
-                        db.write_volume(volume, fit_clean, ref=study)
+                        db.write_volume(volume, fit_clean, ref=study, append=True)
                     except Exception as e:
-                        logging.error(f'cannot process fit map for {study_id}: {e} ') 
+                        logging.error(f'cannot process fit map for {case_id}: {e} ') 
                 
                 if rpf_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing rpf map for {study_id}')
+                        tqdm.write(f'Computing RPF map for {case_id}')
                         RPF[RPF<0]=0
                         RPF[RPF>10000]=10000
                         db.write_volume((RPF, affine), rpf_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process RPF map for {study_id}: {e} ') 
+                        logging.error(f'cannot process RPF map for {case_id}: {e} ') 
 
                 
                 if avd_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing avd map for {study_id}')
+                        tqdm.write(f'Computing AVD map for {case_id}')
                         AVD[AVD<0]=0
                         AVD[AVD>10000]=10000
                         db.write_volume((AVD, affine), avd_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process AVD map for {study_id}: {e} ') 
+                        logging.error(f'cannot process AVD map for {case_id}: {e} ') 
 
 
                 if mtt_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing mtt map for {study_id}')
+                        tqdm.write(f'Computing MTT map for {case_id}')
                         MTT[MTT<0]=0
                         MTT[MTT>10000]=10000
                         db.write_volume((MTT, affine), mtt_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process mtt map for {study_id}: {e} ') 
+                        logging.error(f'cannot process mtt map for {case_id}: {e} ') 
 
                 if fp_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing fp map for {study_id}')
+                        tqdm.write(f'Computing FP map for {case_id}')
                         par_0 = par[...,0]
                         db.write_volume((par_0, affine), fp_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process fp map for {study_id}: {e}') 
+                        logging.error(f'cannot process fp map for {case_id}: {e}') 
 
                 if tp_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing tp map for {study_id}')
+                        tqdm.write(f'Computing TP map for {case_id}')
                         par_1 = par[...,1]
                         db.write_volume((par_1, affine), tp_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process tp map for {study_id}: {e}') 
+                        logging.error(f'cannot process tp map for {case_id}: {e}') 
 
                 if vp_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing vp map for {study_id}')
+                        tqdm.write(f'Computing VP map for {case_id}')
                         par_0_1 = par[...,0]*par[...,1]/60
 
                         db.write_volume((par_0_1, affine), vp_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process vp map for {study_id}: {e}') 
+                        logging.error(f'cannot process vp map for {case_id}: {e}') 
 
                 if ft_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing ft map for {study_id}')
+                        tqdm.write(f'Computing FT map for {case_id}')
                         par_2 = par[...,2]
                         db.write_volume((par_2, affine), ft_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process ft map for {study_id}: {e}')  
+                        logging.error(f'cannot process ft map for {case_id}: {e}')  
 
                 if tt_clean not in db.series(baseline_path):
 
                     try:
-                        print(f'Computing tt map for {study_id}')
+                        tqdm.write(f'Computing TT map for {case_id}')
                         par_3 = par[...,3]
                         db.write_volume((par_3, affine), tt_clean, ref=study)
                     except Exception as e:
-                        logging.error(f'cannot process tt map for {study_id}: {e}')                         
-
+                        logging.error(f'cannot process tt map for {case_id}: {e}')       
 
             except Exception as e:
-                print(f"Error processing {study_id}: {e}")
+                logging.error(f"Cannot map {case_id}: {e}")
 
 
  
-
+#Call Task
 if __name__ == '__main__':
-    DCE('Leeds')
+    DCE('Bari')
