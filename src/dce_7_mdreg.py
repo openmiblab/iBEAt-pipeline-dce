@@ -101,9 +101,9 @@ def rebuild_mdr_table(site, batch_no=None):
             ])
             paths[key] = all_files[-1:] if all_files else []
 
-        # Require coreg, defo, model_fit to be present
-        if not all(paths[k] for k in ["coreg", "defo", "model_fit"]):
-            print(f"Skipping {case_id}, missing files for last iteration.")
+        # Require coreg to be present
+        if not all(paths[k] for k in ["coreg"]):
+            print(f"Skipping {case_id}, missing coreg file(s).")
             continue
 
         # Lookup study from db
@@ -375,18 +375,22 @@ def write_2_folder(site, batch_no=None):
             defo_path = last_file(paths["defo"])
             model_fit_path = last_file(paths["model_fit"])
 
-            if not coreg_path or not defo_path or not model_fit_path:
+            if not coreg_path:
                 logging.warning(f"No completed iteration found for case {case}, skipping write.")
                 continue
 
             # Load arrays
-            coreg = np.load(coreg_path)
+            if coreg_path:
+                coreg = np.load(coreg_path)
             #print('coreg:', coreg.shape)
-            model_fit = np.load(model_fit_path)
+            if model_fit_path:
+                model_fit = np.load(model_fit_path)
             #print('mf:', model_fit.shape)
-            defo = np.load(defo_path)
+            if defo_path:
+                defo = np.load(defo_path)
             #print('defo:', defo.shape)
-            if model_fit.ndim > 5:
+
+            if model_fit is not None and model_fit.ndim > 5:
                 model_fit, defo = defo, model_fit
                 print(f'Checkpoint outputs Defo and Model fit are swapped for case {case}. Please Check. Switching...')
 
@@ -401,8 +405,13 @@ def write_2_folder(site, batch_no=None):
             tqdm.write('Building MoCo series...')
             #vol = coreg 
             if site == 'Bari':
-                volume = vreg.volume(coreg, affine, coords, dims=['AcquisitionTime'])
-                db.write_volume(volume, mdr_clean, ref=study, append=True)
+                try:
+                    if coreg is not None:
+                        if mdr_clean not in db.series(base_dir):
+                            volume = vreg.volume(coreg, affine, coords, dims=['AcquisitionTime'])
+                            db.write_volume(volume, mdr_clean, ref=study, append=True)
+                except Exception as e:
+                    logging.error(f'Cannot build MoCo series: {e}')                
 
             # elif site == 'Leeds':
             #     volume = vreg.volume(, affine, coords, dims=['InstanceNumber'])
@@ -410,15 +419,29 @@ def write_2_folder(site, batch_no=None):
 
             #_______________DEFORMATION________________
             tqdm.write('Building Defo series...')
-            model_defo = mdreg.defo_norm(defo, 'eumip')
-            db.write_volume((model_defo, affine), defo_clean, ref=study, append=True)
+            try:
+                if defo is not None:
+                    if model_defo not in db.series(base_dir):
+                        model_defo = mdreg.defo_norm(defo, 'eumip')
+                        db.write_volume((model_defo, affine), defo_clean, ref=study, append=True)
+            except Exception as e:
+                logging.error(f'Cannot build Defo series: {e}') 
 
             #_______________MODEL FIT________________
-            tqdm.write('Building Model Fitting series...')
+            tqdm.write('Building Model Fit series...')
+            if site == 'Bari':
+                try:
+                    if model_fit is not None:
+                        if model_fit_clean not in db.series(base_dir):
+                            volume = vreg.volume(model_fit, affine, coords, dims=['AcquisitionTime'])
+                            db.write_volume(volume, model_fit_clean, ref=study, append=True)            
+                except Exception as e:
+                    logging.error(f'Cannot build Model Fit series: {e}')
+                    
+                
+                    
 
-            db.write_volume((model_fit, affine), model_fit_clean, ref=study, append=True)
-
-            logging.info(f"Case {case} written successfully.")
+            tqdm.write(f"Case {case} written successfully.")
 
             # keep final iteration and remove older arrays to save space 
             for f_list in [paths["coreg"], paths["defo"], paths["model_fit"], paths["pars"]]:
@@ -440,7 +463,7 @@ if __name__ == '__main__':
     #_mdr_2d('Bari')
 
     #Optional - Recommended if running in batches, before writing files to DICOM
-    rebuild_mdr_table('Bari')
+    #rebuild_mdr_table('Bari')
 
     # Step 3 - Write Files to DICOM
     write_2_folder('Bari')
