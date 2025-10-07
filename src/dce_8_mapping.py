@@ -15,7 +15,7 @@ def add_series_name(folder, all_series: list):
     return new_series_name
 
 # Main Protocol
-def DCE(site):
+def Mapping(site):
     
     #data directories
     data_dir = os.path.join(os.getcwd(), 'build', 'dce_2_data', site, "Patients")
@@ -43,6 +43,7 @@ def DCE(site):
     pat_series = []
     for study in tqdm(DCE_mdr_moco, desc=f'Creating Maps for {site}', unit='case'):
         case_id = study[1]
+        tqdm.write(f'Processing case {case_id}')
         
         # find matching csv
         aif_file = next((f for f in csv_files if case_id in f), None)
@@ -56,7 +57,7 @@ def DCE(site):
             try:
 
                 
-                #create series name
+                # create series name
                 series_name = add_series_name(case_id, pat_series)
                 baseline_path = [destpath, case_id, ('Baseline', 0)]
 
@@ -82,9 +83,10 @@ def DCE(site):
                           fp_clean, tp_clean, vp_clean, ft_clean, tt_clean]
                 
                 if all(x in db.series(baseline_path) for x in series):
+                    tqdm.write(f'Skipping case {case_id}. All maps exist in {site} folder')
                     continue
 
-                #load mdr_moco_dicom 
+                #load moco_dicom 
                 if site == 'Bari':              
                     # get array, affine coords from moco dce
                     vol = db.volume(study, dims=['AcquisitionTime'])
@@ -95,18 +97,21 @@ def DCE(site):
 
                 # load aif curve from csv
                 aif_data = pd.read_csv(os.path.join(aif_path, aif_file))
-                aif = aif_data.iloc[:, 1].values  # adjust if column index differs
+                aif = aif_data.iloc[:, 1].values  
                 time = aif_data.iloc[:, 0].values
                 dt = np.mean(np.diff(time)) 
 
                 # calculating maps
+                tqdm.write('Computing MAX, AUC & ATT...')
                 MAX, AUC, ATT, SO = dcmri.pixel_descriptives(array, aif, dt, baseline=15)
+                tqdm.write('Computing RPF, AVD & MTT...')
                 RPF, AVD, MTT = dcmri.pixel_deconvolve(array, aif, dt, baseline=15, regpar=0.1)
+                tqdm.write('Computing Fit & remaining maps...')
                 fit, par = dcmri.pixel_2cfm_linfit(array, aif, time, baseline=15)
               
                 if max_clean not in db.series(baseline_path):
                     try:
-                        tqdm.write(f'Computing MAX map for {case_id}')
+                        tqdm.write(f'Building MAX map for {case_id}')
                         MAX[MAX<0]=0
                         MAX[MAX>10000]=10000
                         db.write_volume((MAX, affine), max_clean, ref=study)
@@ -115,7 +120,7 @@ def DCE(site):
                        
                 if auc_clean not in db.series(baseline_path):
                     try:
-                        tqdm.write(f'Computing AUC map for {case_id}')
+                        tqdm.write(f'Building AUC map for {case_id}')
                         AUC[AUC<0]=0
                         AUC[AUC>10000]=10000
                         db.write_volume((AUC, affine), auc_clean, ref=study)
@@ -125,7 +130,7 @@ def DCE(site):
                 if att_clean not in db.series(baseline_path):   
                     
                     try:
-                        tqdm.write(f'Computing ATT map for {case_id}')
+                        tqdm.write(f'Building ATT map for {case_id}')
                         ATT[ATT<0]=0
                         ATT[ATT>10000]=10000
                         db.write_volume((ATT, affine), att_clean, ref=study)
@@ -135,7 +140,7 @@ def DCE(site):
                 if fit_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing FIT for {case_id}')
+                        tqdm.write(f'Building FIT for {case_id}')
                         volume = vreg.volume(fit, affine, coords, dims=['AcquisitionTime'])
 
                         db.write_volume(volume, fit_clean, ref=study, append=True)
@@ -145,7 +150,7 @@ def DCE(site):
                 if rpf_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing RPF map for {case_id}')
+                        tqdm.write(f'Building RPF map for {case_id}')
                         RPF[RPF<0]=0
                         RPF[RPF>10000]=10000
                         db.write_volume((RPF, affine), rpf_clean, ref=study)
@@ -156,7 +161,7 @@ def DCE(site):
                 if avd_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing AVD map for {case_id}')
+                        tqdm.write(f'Building AVD map for {case_id}')
                         AVD[AVD<0]=0
                         AVD[AVD>10000]=10000
                         db.write_volume((AVD, affine), avd_clean, ref=study)
@@ -167,7 +172,7 @@ def DCE(site):
                 if mtt_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing MTT map for {case_id}')
+                        tqdm.write(f'Building MTT map for {case_id}')
                         MTT[MTT<0]=0
                         MTT[MTT>10000]=10000
                         db.write_volume((MTT, affine), mtt_clean, ref=study)
@@ -177,7 +182,7 @@ def DCE(site):
                 if fp_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing FP map for {case_id}')
+                        tqdm.write(f'Building FP map for {case_id}')
                         par_0 = par[...,0]
                         db.write_volume((par_0, affine), fp_clean, ref=study)
                     except Exception as e:
@@ -186,7 +191,7 @@ def DCE(site):
                 if tp_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing TP map for {case_id}')
+                        tqdm.write(f'Building TP map for {case_id}')
                         par_1 = par[...,1]
                         db.write_volume((par_1, affine), tp_clean, ref=study)
                     except Exception as e:
@@ -195,7 +200,7 @@ def DCE(site):
                 if vp_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing VP map for {case_id}')
+                        tqdm.write(f'Building VP map for {case_id}')
                         par_0_1 = par[...,0]*par[...,1]/60
 
                         db.write_volume((par_0_1, affine), vp_clean, ref=study)
@@ -205,7 +210,7 @@ def DCE(site):
                 if ft_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing FT map for {case_id}')
+                        tqdm.write(f'Building FT map for {case_id}')
                         par_2 = par[...,2]
                         db.write_volume((par_2, affine), ft_clean, ref=study)
                     except Exception as e:
@@ -214,7 +219,7 @@ def DCE(site):
                 if tt_clean not in db.series(baseline_path):
 
                     try:
-                        tqdm.write(f'Computing TT map for {case_id}')
+                        tqdm.write(f'Building TT map for {case_id}')
                         par_3 = par[...,3]
                         db.write_volume((par_3, affine), tt_clean, ref=study)
                     except Exception as e:
@@ -227,4 +232,4 @@ def DCE(site):
  
 #Call Task
 if __name__ == '__main__':
-    DCE('Bari')
+    Mapping('Bari')
