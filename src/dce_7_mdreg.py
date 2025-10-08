@@ -176,15 +176,15 @@ def dce_to_process(site, batch_no=None):
         # Load existing data if file exists
         if os.path.exists(pickle_path):
             with open(pickle_path, "rb") as f:
-                existing_images_table = pickle.load(f)
+                images_table = pickle.load(f)
         else:
-            existing_images_table = []
+            images_table = []
 
         # Remove any old entries for this case
-        existing_images_table = [e for e in existing_images_table if e["case_id"] != case_id]
+        images_table = [e for e in images_table if e["case_id"] != case_id]
 
         # Append the new case
-        existing_images_table.append({
+        images_table.append({
             'case_id': case_id,
             'study': study,
             'iteration': iteration
@@ -192,7 +192,7 @@ def dce_to_process(site, batch_no=None):
 
         # Write the updated list back
         with open(pickle_path, "wb") as f:
-            pickle.dump(existing_images_table, f)
+            pickle.dump(images_table, f)
 
         print(f"Saved {case_id} for 3D MDREG to {site} folder")
       
@@ -395,10 +395,20 @@ def write_2_folder(site, batch_no=None):
                 print(f'Checkpoint outputs Defo and Model fit are swapped for case {case}. Please Check. Switching...')
 
             # Extract metadata from image
-            image = db.volume(study, dims='AcquisitionTime')
+            image = db.volume(study, 'AcquisitionTime')
             if image is not None:
                 affine = image.affine
                 coords = image.coords
+                
+            # image_vols = db.volumes_2d(study, 'AcquisitionTime')
+            # if image_vols is not None:
+            #     affines = []
+            #     coords = []
+            #     for vol in image_vols:
+            #         affine = vol.affine
+            #         coord = vol.coords
+            #         affines.append(affine)
+            #         coords.append(coord)
 
             #_______________MOCO________________
 
