@@ -288,12 +288,12 @@ def _coreg(volume, bk, lk, rk):
     }
 
 
-#Main Protocol: 
+#Main Protocol: Aligning 2D maps and moco dynamic to Dixon masks
 def _align_2d(site, table_dir=None):
     
     #define paths
     dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
-    png_save = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients", 'Coregistered')
+    png_save = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients", 'Coregistration Displays')
     os.makedirs(png_save, exist_ok=True)
 
     # Logging setup
@@ -366,8 +366,8 @@ def _align_2d(site, table_dir=None):
             continue  
           
         #__________________CHECK AND WRITE ANY MISSING CASES___________________________________#
-        ###Easy build for few missing series in file by applying affine from another aligned map.
-        ####This prevents from having to run through co-registration again for the few missing series.
+        ###Easy build for a few missing series in file by applying affine from another aligned map.
+        ####This prevents from having to run through co-registration again for the finite missing series.
 
         # 1: find the few missing series
         db_series = db.series(database)
@@ -389,7 +389,7 @@ def _align_2d(site, table_dir=None):
             tqdm.write(f"Missing series for case {case_id}:")   
             for s in missing_series:
                 tqdm.write(f"  - {s[3][0]}")
-                tqdm.write('sending to quick write series')
+            tqdm.write('Sending missing series to quick write dicom function')
             quick_write_series(missing_series, map_dict, db_series, site, case_id)
             continue
         
@@ -448,7 +448,7 @@ def _align_2d(site, table_dir=None):
                         db.write_volume(new_slice_vol, auc_clean_lk, ref=auc_path[0], append=True)
                         post_auc_lk_vols.append(new_slice_vol)
                 except Exception as e:
-                    logging.error(f'cannot build AUC LK: {e}')
+                    logging.error(f'cannot build AUC LK for {case_id}: {e}')
 
             
             if auc_clean_rk not in db.series(database):
@@ -459,7 +459,7 @@ def _align_2d(site, table_dir=None):
                         db.write_volume(new_slice_vol, auc_clean_rk, ref=auc_path[0], append=True)
                         post_auc_rk_vols.append(new_slice_vol)
                 except Exception as e:
-                    logging.error(f'cannot build AUC RK: {e}')
+                    logging.error(f'cannot build AUC RK for {case_id}: {e}')
 
             # Save (and display) pre- and post-reg img and mask overlays
             vplot.overlay_2d_new(
@@ -495,18 +495,18 @@ def _align_2d(site, table_dir=None):
             if mdr_clean_rk not in db.series(database):
                 try:
                     for aff, s in zip(affine['RK'], mdr_slice_vols):
-                        new_slice_vol = s.set_affine(aff)
+                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                         db.write_volume(new_slice_vol, mdr_clean_rk, ref=mdr_path, append=True)
                 except Exception as e:
-                    logging.error(f'cannot build MDR RK: {e}')
+                    logging.error(f'cannot build MDR RK for {case_id}: {e}')
 
             if mdr_clean_lk not in db.series(database):
                 try:
                     for aff, s in zip(affine['LK'], mdr_slice_vols):
-                        new_slice_vol = s.set_affine(aff)
+                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                         db.write_volume(new_slice_vol, mdr_clean_lk, ref=mdr_path, append=True)
                 except Exception as e:
-                    logging.error(f'cannot build MDR LK: {e}')        
+                    logging.error(f'cannot build MDR LK for {case_id}: {e}')        
 
             tqdm.write('Building aligned RPF series...')
             rpf_volume = db.volumes_2d(rpf_path[0])
@@ -517,7 +517,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, rpf_clean_rk, ref=rpf_path[0], append=True)  
                 except Exception as e:
-                    logging.error(f'cannot build RPF RK: {e}')      
+                    logging.error(f'cannot build RPF RK for {case_id}: {e}')      
             
             if rpf_clean_lk not in db.series(database):
                 try:
@@ -525,7 +525,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, rpf_clean_lk, ref=rpf_path[0], append=True)        
                 except Exception as e:
-                    logging.error(f'cannot build RPF LK: {e}')
+                    logging.error(f'cannot build RPF LK for {case_id}: {e}')
 
             tqdm.write('Building aligned AVD series....')
             avd_volume = db.volumes_2d(avd_path[0])        
@@ -535,7 +535,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, avd_clean_rk, ref=avd_path[0], append=True)
                 except Exception as e:
-                    logging.error(f'cannot build AVD RK: {e}')
+                    logging.error(f'cannot build AVD RK for {case_id}: {e}')
             
             if avd_clean_lk not in db.series(database):
                 try:
@@ -543,7 +543,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, avd_clean_lk, ref=avd_path[0], append=True) 
                 except Exception as e:
-                    logging.error(f'cannot build AVD LK: {e}')       
+                    logging.error(f'cannot build AVD LK for {case_id}: {e}')       
             
 
             tqdm.write('Building aligned MTT series....')
@@ -554,7 +554,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, mtt_clean_rk, ref=mtt_path[0], append=True)
                 except Exception as e:
-                    logging.error(f'cannot build MTT RK: {e}')              
+                    logging.error(f'cannot build MTT RK for {case_id}: {e}')              
 
             if mtt_clean_lk not in db.series(database):
                 try:
@@ -562,7 +562,7 @@ def _align_2d(site, table_dir=None):
                         new_slice_vol = vreg.volume(s.values, aff)
                         db.write_volume(new_slice_vol, mtt_clean_lk, ref=mtt_path[0], append=True)
                 except Exception as e:
-                    logging.error(f'cannot build MTT LK: {e}')    
+                    logging.error(f'cannot build MTT LK for {case_id}: {e}')    
 
 
 
