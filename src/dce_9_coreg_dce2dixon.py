@@ -48,30 +48,30 @@ def _get_data(site, table_dir=None):
         # Find corresponding mask case_id
         mask_path = next((m for m in mask_database if m[1] == case_id), None)
         if mask_path is None:
-            print(f"Skipping case {case_id}, case_id not found in mask database.")
+            tqdm.write(f"Skipping case {case_id}, case_id not found in mask database.")
             continue
         # Find corresponding mask case_id
         mdr_moco_path = next((img for img in mdr_database if img[1] == case_id), None)
         if mdr_moco_path is None:
-            print(f"Skipping case {case_id}, DCE mdr series not found.") 
+            tqdm.write(f"Skipping case {case_id}, DCE mdr series not found.") 
             continue 
 
         # Find corresponding DCE maps
         auc_map_path = [_map for _map in auc_database if _map[1] == case_id]
         if not auc_map_path:
-            print(f"Skipping case {case_id}, DCE maps not found.")  
+            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
             continue
         rpf_map_path = [_map for _map in rpf_database if _map[1] == case_id]
         if not rpf_map_path:
-            print(f"Skipping case {case_id}, DCE maps not found.")  
+            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
             continue
         avd_map_path = [_map for _map in avd_database if _map[1] == case_id]
         if not avd_map_path:
-            print(f"Skipping case {case_id}, DCE maps not found.")  
+            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
             continue
         mtt_map_path = [_map for _map in mtt_database if _map[1] == case_id]
         if not mtt_map_path:
-            print(f"Skipping case {case_id}, DCE maps not found.")  
+            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
             continue
 
 
@@ -144,7 +144,8 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
  
     # 1. Handle missing series
     for s in missing_series:
-        side = "rk" if "_rk" in s[3][0] else "lk"
+        new_series_name = s[3][0]
+        side = "rk" if "_rk" in new_series_name else "lk"
 
       # 2: load affines if available
         if side == 'rk':
@@ -153,81 +154,98 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
                 ref_rk_vols = db.volumes_2d(ref_rk)
                 for vol in ref_rk_vols:
                     affine_rk.append(vol.affine)
-                print(f"Using {ref_rk[3][0]} affine for right kidney.")
+                tqdm.write(f"Using {ref_rk[3][0]} affine for right kidney.")
             else:
-                print("No RK reference series available.")
-        elif side == 'rk':
+                tqdm.write("No RK reference series available.")
+        elif side == 'lk':
             if ref_lk:
                 affine_lk = []
                 ref_lk_vols = db.volumes_2d(ref_lk)
                 for vol in ref_lk_vols:
                     affine_lk.append(vol.affine)
-                print(f"Using {ref_lk[3][0]} affine for left kidney.")
+                tqdm.write(f"Using {ref_lk[3][0]} affine for left kidney.")
             else:
-                print("No LK reference series available.")
+                tqdm.write("No LK reference series available.")
         
         affine = affine_rk if side == "rk" else affine_lk
         if affine is None:
-            print(f"No affine found for {s[3][0]}, skipping.")
+            tqdm.write(f"No affine found for {new_series_name}, skipping.")
             continue
 
         # 3. Determine which map to use (based on series name)
         map_lookup = map_dict 
-        if "auc".lower() in s[3][0]:
+        if "auc".lower() in new_series_name:
             map = map_lookup["auc"]
             ref_series = auc_path[0]
+            map_name = map[0][3][0]
             if side == 'lk':
                 series_name = auc_clean_lk
             elif side == 'rk':
                 series_name = auc_clean_rk
-        elif "rpf".lower() in s[3][0]:
+        elif "rpf".lower() in new_series_name:
             map = map_lookup["rpf"]
             ref_series = rpf_path[0]
+            map_name = map[0][3][0]
             if side == 'lk':
                 series_name = rpf_clean_lk
             elif side == 'rk':
                 series_name = rpf_clean_rk                
-        elif "avd".lower() in s[3][0]:
+        elif "avd".lower() in new_series_name:
             map = map_lookup["avd"]
             ref_series = avd_path[0]
+            map_name = map[0][3][0]
             if side == 'lk':
                 series_name = avd_clean_lk
             elif side == 'rk':
                 series_name = avd_clean_rk                
-        elif "mtt".lower() in s[3][0]:
+        elif "mtt".lower() in new_series_name:
             map = map_lookup["mtt"]
             ref_series = mtt_path[0]
+            map_name = map[0][3][0]
             if side == 'lk':
                 series_name = mtt_clean_lk
             elif side == 'rk':
                 series_name = mtt_clean_rk
-        elif "mdr".lower() in s[3][0]:
+        elif "mdr".lower() in new_series_name:
             map = map_lookup["mdr"]
             ref_series = mdr_path
+            map_name = map[3][0]
             if side == 'lk':
                 series_name = mdr_clean_lk
             else:
                 series_name = mdr_clean_rk
         else:
-            print(f"Cannot determine map type for {s[3][0]}, skipping.")
+            tqdm.write(f"Cannot determine map type for {new_series_name}, skipping.")
             continue
-
-        print(f"Assigning {s[3][0]} to map {map[0][3][0]} using {side.upper()} affine.")
+        
+        tqdm.write(f"Building {new_series_name} series using {map_name} and {side.upper()} affine.")
 
         # 4. Load the map (placeholder for your actual map loading)
-        if map == 'mdr':
-            map_vols = db.volumes_2d(map, 'AcquisitionTime')
-        else:
-            map_vols = db.volumes_2d(map[0])
+        try:
+            if 'mdr'.lower() in map[3][0]:
+                map_vols = db.volumes_2d(map, 'AcquisitionTime')
+            else:
+                map_vols = db.volumes_2d(map[0])
+        except Exception as e:
+            logging.error(f'Cannot load map volume - {e}')
+            
+    
         
         if map_vols:
             try:
                 for aff, s in zip(affine, map_vols):
+                    if 'mdr'.lower() in map[3][0]:
+                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
+                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+                    else:
                         new_slice_vol = vreg.volume(s.values, aff) 
                         db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
             except Exception as e:
-                logging.error(f'cannot build {s[3][0]}: {e}')
-    tqdm.write(f'All Aligned volumes saved in {case_id} folder')
+                logging.error(f'cannot build {new_series_name}: {e}')
+        else:
+            logging.error(f'no map path found:{e}')
+
+    tqdm.write(f'All aligned volumes saved in {case_id} folder')
 
 #Helper: Coreg parameters
 def _coreg(volume, bk, lk, rk):
@@ -344,7 +362,7 @@ def _align_2d(site, table_dir=None):
         ]
 
         if all(x in db.series(database) for x in series):
-            print(f'Skipping case {case_id}. All coregistered series in {site} folder')
+            tqdm.write(f'Skipping case {case_id}. All coregistered series in {site} folder')
             continue  
           
         #__________________CHECK AND WRITE ANY MISSING CASES___________________________________#
@@ -356,7 +374,7 @@ def _align_2d(site, table_dir=None):
         missing_series = [s for s in series if s not in db_series]
 
         if not missing_series:
-            print(f"Skipping case {case_id}. All coregistered series exist in {site} folder.")
+            tqdm.write(f"Skipping case {case_id}. All coregistered series exist in {site} folder.")
             continue
 
         map_dict = {
@@ -368,10 +386,10 @@ def _align_2d(site, table_dir=None):
             }
 
         if len(missing_series) < 10: 
-            print(f"Missing series for case {case_id}:")   
+            tqdm.write(f"Missing series for case {case_id}:")   
             for s in missing_series:
-                print(f"  - {s[3][0]}")
-                print('sending to quick write series')
+                tqdm.write(f"  - {s[3][0]}")
+                tqdm.write('sending to quick write series')
             quick_write_series(missing_series, map_dict, db_series, site, case_id)
             continue
         
@@ -417,9 +435,10 @@ def _align_2d(site, table_dir=None):
                 #time_taken = end_time - start_time  # Calculate time taken for this iteration
                 
                 #time for each slice
-                #print(f"Time taken for slice: {time_taken:.1f} seconds")
+                #tqdm.write(f"Time taken for slice: {time_taken:.1f} seconds")
             
             #_______________BUILD ALIGNED MAP VOLUMES__________________#
+            
             # Build AUC volumes
             if auc_clean_lk not in db.series(database):
                 try:
@@ -547,7 +566,7 @@ def _align_2d(site, table_dir=None):
 
 
 
-            tqdm.write('Coregistration complete!')
+    tqdm.write('Coregistration complete!')
 
 
 if __name__ == '__main__':
