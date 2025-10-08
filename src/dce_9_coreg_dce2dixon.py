@@ -12,12 +12,13 @@ from tqdm import tqdm
 import vreg.plot as vplot
 import logging
 
-
+#Helper: 
 def bari_add_series_name(folder, all_series: list):
     new_series_name = "DCE_9_"
     all_series.append(new_series_name)
     return new_series_name
 
+#Helper: create img + mask inventory
 def _get_data(site, table_dir=None):
     if table_dir is None:
         table_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
@@ -92,6 +93,141 @@ def _get_data(site, table_dir=None):
     
     return images_and_masks
 
+#Helper: For writing the few missing cases using lk/rk aligned map affine        
+def quick_write_series(missing_series, map_dict, db_series, site, case_id):         
+    
+    tqdm.write(f'Processing case {case_id}...')
+    
+    
+    # dictionary       
+    auc_path = map_dict['auc']
+    rpf_path = map_dict['rpf']
+    avd_path = map_dict['avd']
+    mtt_path = map_dict['mtt']
+    mdr_path = map_dict['mdr']
+
+    #dir paths
+    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+
+    pat_series = []
+    bari_add_series_name(case_id, pat_series)
+    database = [dest_dir, case_id, ('Baseline', 0)]
+    
+    #auc paths
+    auc_clean_rk = database + [(pat_series[-1] + "auc_rk_aligned", 0)]
+    auc_clean_lk = database + [(pat_series[-1] + "auc_lk_aligned", 0)]
+
+    rpf_clean_rk = database + [(pat_series[-1] + "rpf_rk_aligned", 0)]
+    rpf_clean_lk = database + [(pat_series[-1] + "rpf_lk_aligned", 0)]
+
+    #avd paths
+    avd_clean_rk  = database + [(pat_series[-1] + "avd_rk_aligned", 0)]
+    avd_clean_lk  = database + [(pat_series[-1] + "avd_lk_aligned", 0)]
+
+    #mtt paths 
+    mtt_clean_rk = database + [(pat_series[-1] + "mtt_rk_aligned", 0)]
+    mtt_clean_lk = database + [(pat_series[-1] + "mtt_lk_aligned", 0)]
+
+    #mdr paths
+    mdr_clean_rk = database + [(pat_series[-1] + "mdr_rk_aligned", 0)]
+    mdr_clean_lk = database + [(pat_series[-1] + "mdr_lk_aligned", 0)] 
+
+
+
+    # Determine reference series (first found series available for rk and lk)
+    series_rk = [auc_clean_rk, rpf_clean_rk, avd_clean_rk, mtt_clean_rk, mdr_clean_rk]
+    series_lk = [auc_clean_lk, rpf_clean_lk, avd_clean_lk, mtt_clean_lk, mdr_clean_lk]
+
+    ref_rk = next((x for x in series_rk if x in db_series), None)
+    ref_lk = next((x for x in series_lk if x in db_series), None)
+
+ 
+    # 1. Handle missing series
+    for s in missing_series:
+        side = "rk" if "_rk" in s[3][0] else "lk"
+
+      # 2: load affines if available
+        if side == 'rk':
+            if ref_rk:
+                affine_rk = []
+                ref_rk_vols = db.volumes_2d(ref_rk)
+                for vol in ref_rk_vols:
+                    affine_rk.append(vol.affine)
+                print(f"Using {ref_rk[3][0]} affine for right kidney.")
+            else:
+                print("No RK reference series available.")
+        elif side == 'rk':
+            if ref_lk:
+                affine_lk = []
+                ref_lk_vols = db.volumes_2d(ref_lk)
+                for vol in ref_lk_vols:
+                    affine_lk.append(vol.affine)
+                print(f"Using {ref_lk[3][0]} affine for left kidney.")
+            else:
+                print("No LK reference series available.")
+        
+        affine = affine_rk if side == "rk" else affine_lk
+        if affine is None:
+            print(f"No affine found for {s[3][0]}, skipping.")
+            continue
+
+        # 3. Determine which map to use (based on series name)
+        map_lookup = map_dict 
+        if "auc".lower() in s[3][0]:
+            map = map_lookup["auc"]
+            ref_series = auc_path[0]
+            if side == 'lk':
+                series_name = auc_clean_lk
+            elif side == 'rk':
+                series_name = auc_clean_rk
+        elif "rpf".lower() in s[3][0]:
+            map = map_lookup["rpf"]
+            ref_series = rpf_path[0]
+            if side == 'lk':
+                series_name = rpf_clean_lk
+            elif side == 'rk':
+                series_name = rpf_clean_rk                
+        elif "avd".lower() in s[3][0]:
+            map = map_lookup["avd"]
+            ref_series = avd_path[0]
+            if side == 'lk':
+                series_name = avd_clean_lk
+            elif side == 'rk':
+                series_name = avd_clean_rk                
+        elif "mtt".lower() in s[3][0]:
+            map = map_lookup["mtt"]
+            ref_series = mtt_path[0]
+            if side == 'lk':
+                series_name = mtt_clean_lk
+            elif side == 'rk':
+                series_name = mtt_clean_rk
+        elif "mdr".lower() in s[3][0]:
+            map = map_lookup["mdr"]
+            ref_series = mdr_path
+            if side == 'lk':
+                series_name = mdr_clean_lk
+            else:
+                series_name = mdr_clean_rk
+        else:
+            print(f"Cannot determine map type for {s[3][0]}, skipping.")
+            continue
+
+        print(f"Assigning {s[3][0]} to map {map[0][3][0]} using {side.upper()} affine.")
+
+        # 4. Load the map (placeholder for your actual map loading)
+        if map == 'mdr':
+            map_vols = db.volumes_2d(map, 'AcquisitionTime')
+        else:
+            map_vols = db.volumes_2d(map[0])
+        
+        if map_vols:
+            try:
+                for aff, s in zip(affine, map_vols):
+                        new_slice_vol = vreg.volume(s.values, aff) 
+                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+            except Exception as e:
+                logging.error(f'cannot build {s[3][0]}: {e}')
+    tqdm.write(f'All Aligned volumes saved in {case_id} folder')
 
 #Helper: Coreg parameters
 def _coreg(volume, bk, lk, rk):
@@ -412,138 +548,7 @@ def _align_2d(site, table_dir=None):
 
 
             tqdm.write('Coregistration complete!')
-        
-def quick_write_series(missing_series, map_dict, db_series, site, case_id):         
-    tqdm.write(f'Processing case {case_id}...')
-    map_lookup = map_dict 
-            
-    auc_path = map_dict['auc']
-    rpf_path = map_dict['rpf']
-    avd_path = map_dict['avd']
-    mtt_path = map_dict['mtt']
-    mdr_path = map_dict['mdr']
 
-    #dir paths
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
-
-    pat_series =[]
-    bari_add_series_name(case_id, pat_series)
-    database = [dest_dir, case_id, ('Baseline', 0)]
-    
-    #auc paths
-    auc_clean_rk = database + [(pat_series[-1] + "auc_rk_aligned", 0)]
-    auc_clean_lk = database + [(pat_series[-1] + "auc_lk_aligned", 0)]
-
-    rpf_clean_rk = database + [(pat_series[-1] + "rpf_rk_aligned", 0)]
-    rpf_clean_lk = database + [(pat_series[-1] + "rpf_lk_aligned", 0)]
-
-    #avd paths
-    avd_clean_rk  = database + [(pat_series[-1] + "avd_rk_aligned", 0)]
-    avd_clean_lk  = database + [(pat_series[-1] + "avd_lk_aligned", 0)]
-
-    #mtt paths 
-    mtt_clean_rk = database + [(pat_series[-1] + "mtt_rk_aligned", 0)]
-    mtt_clean_lk = database + [(pat_series[-1] + "mtt_lk_aligned", 0)]
-
-    #mdr paths
-    mdr_clean_rk = database + [(pat_series[-1] + "mdr_rk_aligned", 0)]
-    mdr_clean_lk = database + [(pat_series[-1] + "mdr_lk_aligned", 0)] 
-
-
-
-    # 2: determine reference series (first available for rk and lk)
-    series_rk = [auc_clean_rk, rpf_clean_rk, avd_clean_rk, mtt_clean_rk, mdr_clean_rk]
-    series_lk = [auc_clean_lk, rpf_clean_lk, avd_clean_lk, mtt_clean_lk, mdr_clean_lk]
-
-    ref_rk = next((x for x in series_rk if x in db_series), None)
-    ref_lk = next((x for x in series_lk if x in db_series), None)
-
- 
-    # 1. Handle missing series
-    for s in missing_series:
-        side = "rk" if "_rk" in s[3][0] else "lk"
-
-      # 2: load affines if available
-        if side == 'rk':
-            if ref_rk:
-                affine_rk = []
-                ref_rk_vols = db.volumes_2d(ref_rk)
-                for vol in ref_rk_vols:
-                    affine_rk.append(vol.affine)
-                print(f"Using {ref_rk[3][0]} affine for right kidney.")
-            else:
-                print("No RK reference series available.")
-        elif side == 'rk':
-            if ref_lk:
-                affine_lk = []
-                ref_lk_vols = db.volumes_2d(ref_lk)
-                for vol in ref_lk_vols:
-                    affine_lk.append(vol.affine)
-                print(f"Using {ref_lk[3][0]} affine for left kidney.")
-            else:
-                print("No LK reference series available.")
-        affine = affine_rk if side == "rk" else affine_lk
-
-        if affine is None:
-            print(f"No affine found for {s[3][0]}, skipping.")
-            continue
-
-        # 3. Determine which map to use (based on series name)
-        if "auc".lower() in s[3][0]:
-            map = map_lookup["auc"]
-            ref_series = auc_path[0]
-            if side == 'lk':
-                series_name = auc_clean_lk
-            elif side == 'rk':
-                series_name = auc_clean_rk
-        elif "rpf".lower() in s[3][0]:
-            map = map_lookup["rpf"]
-            ref_series = rpf_path[0]
-            if side == 'lk':
-                series_name = rpf_clean_lk
-            elif side == 'rk':
-                series_name = rpf_clean_rk                
-        elif "avd".lower() in s[3][0]:
-            map = map_lookup["avd"]
-            ref_series = avd_path[0]
-            if side == 'lk':
-                series_name = avd_clean_lk
-            elif side == 'rk':
-                series_name = avd_clean_rk                
-        elif "mtt".lower() in s[3][0]:
-            map = map_lookup["mtt"]
-            ref_series = mtt_path[0]
-            if side == 'lk':
-                series_name = mtt_clean_lk
-            elif side == 'rk':
-                series_name = mtt_clean_rk
-        elif "mdr".lower() in s[3][0]:
-            map = map_lookup["mdr"]
-            ref_series = mdr_path
-            if side == 'lk':
-                series_name = mdr_clean_lk
-            else:
-                series_name = mdr_clean_rk
-        else:
-            print(f"Cannot determine map type for {s[3][0]}, skipping.")
-            continue
-
-        print(f"Assigning {s[3][0]} to map {map[0][3][0]} using {side.upper()} affine.")
-
-        # 4. Load the map (placeholder for your actual map loading)
-        if map == 'mdr':
-            map_vols = db.volumes_2d(map, 'AcquisitionTime')
-        else:
-            map_vols = db.volumes_2d(map[0])
-        
-        if map_vols:
-            try:
-                for aff, s in zip(affine, map_vols):
-                        new_slice_vol = vreg.volume(s.values, aff) 
-                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
-            except Exception as e:
-                logging.error(f'cannot build {s[3][0]}: {e}')
-    tqdm.write(f'All Aligned volumes saved in {case_id} folder')
 
 if __name__ == '__main__':
     #_get_data('Bari')
