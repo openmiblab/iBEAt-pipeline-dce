@@ -19,7 +19,7 @@ def bari_add_series_name(folder, all_series: list):
     return new_series_name
 
 #Helper: create img + mask inventory
-def _get_data(site, table_dir=None):
+def _get_data(site, table_dir=None, batch_no=None):
     if table_dir is None:
         table_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
     os.makedirs(table_dir, exist_ok=True)  
@@ -87,7 +87,8 @@ def _get_data(site, table_dir=None):
         })
 
     # Save the results to file
-    output_path = os.path.join(table_dir, f'{site}_images_masks_table.pkl')
+    #output_path = os.path.join(table_dir, f'{site}_images_masks_table.pkl')
+    output_path = os.path.join(table_dir, f"{site}_images_masks_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
     with open(output_path, 'wb') as f:
         pickle.dump(images_and_masks, f)
     
@@ -289,7 +290,7 @@ def _coreg(volume, bk, lk, rk):
 
 
 #Main Protocol: Aligning 2D maps and moco dynamic to Dixon masks
-def _align_2d(site, table_dir=None):
+def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
     
     #define paths
     dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
@@ -306,7 +307,9 @@ def _align_2d(site, table_dir=None):
 
     if table_dir is None:
         # Build default path
-        table_path = os.path.join(os.getcwd(),'build', 'dce_9_coreg_dce2dixon', site, "Patients", f'{site}_images_masks_table.pkl')
+        table_dir = os.path.join(os.getcwd(),'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+        os.makedirs(table_dir, exist_ok=True)
+        table_path = os.path.join(table_dir, f"{site}_images_masks_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
         if os.path.isfile(table_path):
             tqdm.write('Using existing dictionary...')
             # Case 1a: Default file exists → load it
@@ -317,9 +320,14 @@ def _align_2d(site, table_dir=None):
             tqdm.write('Creating new dce img + mask inventory...')
             images_and_mask_table = _get_data(site, table_dir)
 
-    
+    batch_table = images_and_mask_table[start_case:end_case+1]
+
+    first_case_id = batch_table[0]['case_id']
+    last_case_id = batch_table[-1]['case_id']
+    tqdm.write(f"Processing {len(batch_table)} cases from {first_case_id} to {last_case_id}")
+
     pat_series = []
-    for entry in tqdm(images_and_mask_table, desc=f'Aligning {site} DCE to Dixon', unit='case'):
+    for entry in tqdm(batch_table, desc=f'Aligning {site} DCE to Dixon', unit='case'):
         #retrieve case_id
         case_id = entry['case_id']
         tqdm.write(f'Processing case {case_id}...')
