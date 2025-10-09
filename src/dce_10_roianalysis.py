@@ -13,310 +13,15 @@ import pandas as pd
 from tqdm import tqdm
 from collections.abc import Iterable
 import pydmr
+import pickle
 
+#Helper: Add series name
 def bari_add_series_name(folder, all_series: list):
     new_series_name = "DCE_10_"
     all_series.append(new_series_name)
     return new_series_name
 
-def get_data(site):
-
-    ref_dir = os.path.join(os.getcwd(), 'build', 'dixon_2_data', site, "Patients")
-    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
-    pre_reg_dir = os.path.join(os.getcwd(), 'build', 'dce_8_mapping', site, "Patients")
-    dce_maps_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
-
-     # Load series from databases
-    ref_database = db.series(ref_dir)
-    masks_database = db.series(masks_dir)
-    dce_database = db.series(dce_maps_dir)
-    pre_reg = db.series(pre_reg_dir)
-
-    outphase_database = [
-        entry for entry in ref_database 
-        if entry[3][0].strip().lower() ==
-        'dixon_post_contrast_1_out_phase'
-    ]
-
-    pre_maps2fill_database = [
-        entry for entry in pre_reg
-        if entry[3][0].strip().lower() in
-        ('dce_8_rpf_map', 'dce_8_avd_map', 'dce_8_mtt_map' ) 
-    ]
-
-
-    #Filter out dce maps to align and make sure it is in the order: rpf, avd, mtt
-    rk_maps2fill_database = [
-        entry for entry in dce_database 
-        if entry[3][0].strip().lower() in
-        ('dce_9_rpf_rk_aligned', 'dce_9_avd_rk_aligned', 'dce_9_mtt_rk_aligned' ) 
-    ]
-
-    lk_maps2fill_database = [
-        entry for entry in dce_database 
-        if entry[3][0].strip().lower() in
-        ('dce_9_rpf_lk_aligned', 'dce_9_avd_lk_aligned',  'dce_9_mtt_lk_aligned', ) 
-    ]
-
-
-    # Get unique case identifiers
-    cases_str = set(entry[1] for entry in rk_maps2fill_database)
-
-    images_and_masks = []
-    for case_str in sorted(cases_str):
-        # Find corresponding mask study
-        mask_study = next((s for s in masks_database if s[1] == case_str), None)
-        if mask_study is None:
-            print(f"Skipping case {case_str}, study not found in mask database.")
-            continue
-        
-        ref_study = next((s for s in outphase_database if s[1] == case_str), None)
-        
-
-        rk_dce_study = [s for s in rk_maps2fill_database if s[1] == case_str]
-        if rk_dce_study is None:
-            print(f"Skipping case {case_str}, DCE moco series not found.") 
-        
-        lk_dce_study = [s for s in lk_maps2fill_database if s[1] == case_str]
-        if lk_dce_study is None:
-            print(f"Skipping case {case_str}, DCE moco series not found.") 
-
-        prereg_dce_study = [s for s in pre_maps2fill_database if s[1] == case_str]    
-
-        # Load image and mask volumes
-        mask_volume = db.volume(mask_study)
-
-        #rk volume 
-        bk = mask_volume.values 
-        affine = mask_volume.affine
-        if site == 'Bari':
-            rk_arr = (bk==2)
-            lk_arr = (bk==1)
-        else:
-            rk_arr = (bk==1)
-            lk_arr = (bk==2)
-
-        rk = vreg.volume(rk_arr, affine)
-        lk = vreg.volume(lk_arr, affine)
-
-
-
-
-        pre_dce_maps_volume =[]
-        pre_dce_map_paths = []
-        rk_dce_maps_volume = []
-        rk_dce_map_paths = []
-        lk_dce_maps_volume = []
-        lk_dce_map_paths = []
-
-        for maps in prereg_dce_study:
-
-            try:
-                pre_dce_map_paths.append(maps)
-                map_volume = db.volumes_2d(maps)
-                pre_dce_maps_volume.append(map_volume)
-            except Exception as e:
-                print(e)  
-
-        for maps in rk_dce_study:
-
-            try:
-                rk_dce_map_paths.append(maps)
-                map_volume = db.volumes_2d(maps)
-                rk_dce_maps_volume.append(map_volume)
-            except Exception as e:
-                print(e)      
-        for maps in lk_dce_study:
-            try:
-                lk_dce_map_paths.append(maps)
-                map_volume = db.volumes_2d(maps)
-                lk_dce_maps_volume.append(map_volume)
-            except Exception as e:
-                print(e)
-        
-
-    
-
-        #create data table 
-        images_and_masks.append({
-            'case': mask_study[1],
-            'ref': ref_study,
-            'pre_reg_map': pre_dce_map_paths,
-            'pre_reg_vol': pre_dce_maps_volume,
-            'rk_dce': rk_dce_maps_volume,
-            'rk_dce_maps': rk_dce_map_paths,
-            'rk_volume': rk,
-            'mask_path': mask_study,            
-            'lk_dce': lk_dce_maps_volume,
-            'lk_volume': lk,
-            'lk_dce_maps': lk_dce_map_paths
-
-        })
-
-
-
-    # # Save the results to file
-    # output_path = os.path.join(table_dir, f'{site}_images_masks_table.pkl')
-    # with open(output_path, 'wb') as f:
-    #     pickle.dump(images_and_masks, f)
-    
-    return images_and_masks
-
-
-def fillgaps(site):
-    
-    images_and_masks = get_data(site)
-    pat_series = []
-    for entry in images_and_masks:
-        study = entry['case']
-        dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-        database = [dest_dir, study, ('Baseline', 0)]
-        series_name = bari_add_series_name(study, pat_series)
-
-
-        rk_rpf_clean = database + [(series_name + "rk_rpf_gaps_filled", 0)]
-        lk_rpf_clean = database + [(series_name + "lk_rpf_gaps_filled", 0)]
-        rk_avd_clean = database + [(series_name + "rk_avd_gaps_filled", 0)]
-        lk_avd_clean = database + [(series_name + "lk_avd_gaps_filled", 0)]
-        rk_mtt_clean = database + [(series_name + "rk_mtt_gaps_filled", 0)]
-        lk_mtt_clean = database + [(series_name + "lk_mtt_gaps_filled", 0)]
-        
-        clean_series = [rk_rpf_clean, lk_rpf_clean,
-                        rk_avd_clean, lk_avd_clean,
-                        rk_mtt_clean, lk_mtt_clean ]
-                
-        if all(x in db.series(database) for x in clean_series):
-            roi = ['lk', 'rk']
-            for kidney in roi:
-                cortex_medulla(site, study, roi=kidney)
-            continue
-
-            
-
-
-        ref_study = entry['ref']   
-        rk_dce_volumes = entry['rk_dce']
-        rk = entry['rk_volume']
-        rk_dce_map_paths = entry['rk_dce_maps']
-
-        lk_dce_volumes = entry['lk_dce']
-        lk = entry['lk_volume']
-        lk_dce_map_paths = entry['lk_dce_maps']
-        pre_reg_vol = entry['pre_reg_vol']
-
-        
-   
-        
-        ref_volume = db.volume(ref_study)
-        # pre_reg_outputs = []
-        # for series in pre_reg_vol:
-        #     output_series = fill_slice_gaps(series, ref_volume, mask=rk)
-        #     pre_reg_outputs.append(output_series)
-
-        rk_outputs = []
-        for series in rk_dce_volumes:
-            output_series = fill_slice_gaps(series, ref_volume, mask=rk)
-            rk_outputs.append(output_series)
-        
-        lk_outputs = []
-        for series in lk_dce_volumes:
-            output_series = fill_slice_gaps(series, ref_volume, mask=lk)
-            lk_outputs.append(output_series)
-
-        
-    
-        print('Building RPF Volume...')
-        if rk_rpf_clean not in db.series(database):
-            db.write_volume((rk_outputs[0], rk.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
-
-        if lk_rpf_clean not in db.series(database):
-            db.write_volume((lk_outputs[0], lk.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
-        
-        print('Building AVD Volume...')
-        if rk_avd_clean not in db.series(database):
-            db.write_volume((rk_outputs[1], rk.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
-        
-        if lk_avd_clean not in db.series(database):
-            db.write_volume((lk_outputs[1], lk.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
-
-        print('Building MTT Volume...')
-        if rk_mtt_clean not in db.series(database):
-            db.write_volume((rk_outputs[2], rk.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])        
-        
-        if lk_mtt_clean not in db.series(database):
-            db.write_volume((lk_outputs[2], lk.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
-          
-        #need to fix for continuous workflow  
-        # cortex_medulla_masks = []
-        roi = ['lk', 'rk']
-        for kidney in roi:
-            cortex_medulla(site, study, roi=kidney)
-
-def fill_slice_gaps(series, ref, mask=None):
-
-    ref_volume = mask
-    mask_arr = mask.values
-    #mask = mask.values.astype(bool)
-
-    # output_array = vreg.fill(slice_volumes, ref_volume, mask=mask)
-    contrast_limits = [0, 300]
-    input_array = np.zeros(ref_volume.shape)
-    input_count = np.zeros(ref_volume.shape)
-    for slice_vol in series:
-        # viewer = napari.Viewer()
-        # viewer.add_image(slice_vol.values.T, contrast_limits=contrast_limits)
-        # napari.run()
-        slice_vol_on_ref = slice_vol.slice_like(ref_volume)
-        # viewer = napari.Viewer()
-        # viewer.add_image(slice_vol_on_ref.values.T, contrast_limits=contrast_limits)
-        # napari.run()
-        input_array += slice_vol_on_ref.values      
-        input_count[slice_vol_on_ref.values > 0] += 1
-    nozero = input_count > 0
-    # viewer = napari.Viewer()
-    # viewer.add_image(input_array)
-    # napari.run()
-    input_array[nozero] /= input_count[nozero]
-    viewer = napari.Viewer()
-    viewer.add_image(input_array.T, contrast_limits=contrast_limits)
-    viewer.add_labels(mask_arr.T.astype(int))
-
-    input_geom = np.zeros(ref_volume.shape)
-    input_geom[nozero] = 1
-    print('Filling slice gaps...')
-    output_array = fill_gaps_zonly(input_array, input_geom)
-    # from scipy.ndimage import zoom
-    # def resize_slice(series, mask):
-    #     series_arr = []
-    #     for slice in series:
-    #         arr = slice.values
-    #         series_arr.append(arr)
-    #     series_vol = np.stack(series_arr, axis=3)
-    #     series_vol = series_vol.squeeze()
-
-    # # Calculate zoom factors for each axis
-    #     zoom_factors = [t / s for s, t in zip(series_vol.shape, mask.shape)]
-    # # Use order=1 for bilinear interpolation (good balance of speed and quality)
-    #     resized_slice = zoom(series_vol, zoom_factors, order=1)
-    #     return resized_slice
-
-    # zoomed_img = resize_slice(series, mask)
-    # print(f'Zoomed BF: {np.mean(zoomed_img*mask*1000) :2f} ml/g/min-1')
-    #print(f'Aligned BF: {np.mean(output_array*mask*1000) :2f} ml/g/min-1')
-
-    viewer = napari.Viewer() 
-    viewer.add_image(output_array.T)
-    #viewer.add_image(pre_reg_auc.values.T)
-    #viewer.add_image(zoomed_img.T)
-    viewer.add_labels(mask.values.T.astype(int))
-    napari.run()
-
-
-
-    return output_array
-
-
-
+#Helper: Gaussian filter
 def fill_gaps_zonly(input_array, input_geom, sigma_z=1.5):
     """
     Fill gaps in 3D array by Gaussian smoothing only in Z axis.
@@ -345,96 +50,48 @@ def fill_gaps_zonly(input_array, input_geom, sigma_z=1.5):
 
     return output
 
+#Helper: Slice like reference before filling gaps
+def fill_slice_gaps(series, ref, mask=None):
 
-def cortex_medulla(site, study, roi=None): 
+    ref_volume = mask
+    mask_arr = mask.values
+    contrast_limits = [0, 300]
+    input_array = np.zeros(ref_volume.shape)
+    input_count = np.zeros(ref_volume.shape)
+    for slice_vol in series:
+        # viewer = napari.Viewer()
+        # viewer.add_image(slice_vol.values.T, contrast_limits=contrast_limits)
+        # napari.run()
+        slice_vol_on_ref = slice_vol.slice_like(ref_volume)
+        # viewer = napari.Viewer()
+        # viewer.add_image(slice_vol_on_ref.values.T, contrast_limits=contrast_limits)
+        # napari.run()
+        input_array += slice_vol_on_ref.values      
+        input_count[slice_vol_on_ref.values > 0] += 1
+    nozero = input_count > 0
+    # viewer = napari.Viewer()
+    # viewer.add_image(input_array)
+    # napari.run()
+    input_array[nozero] /= input_count[nozero]
+    # viewer = napari.Viewer()
+    # viewer.add_image(input_array.T, contrast_limits=contrast_limits)
+    # viewer.add_labels(mask_arr.T.astype(int))
 
-    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
-    mask_database = db.series(masks_dir)
-    maps_path = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-    maps_database = db.series(maps_path)
-    maps = [entry for entry in maps_database if entry[3][0].strip().lower() in
-        (f'dce_10_{roi}_rpf_gaps_filled', f'dce_10_{roi}_avd_gaps_filled',  f'dce_10_{roi}_mtt_gaps_filled')] 
-    
-    pat_series = []
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-    mask_png = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", 'overlays', f'{study}_{roi}.png')
-    database = [dest_dir, study, ('Baseline', 0)]
-    series_name = bari_add_series_name(study, pat_series)
+    input_geom = np.zeros(ref_volume.shape)
+    input_geom[nozero] = 1
+    print('Filling slice gaps...')
+    output_array = fill_gaps_zonly(input_array, input_geom)
+
+    # viewer = napari.Viewer() 
+    # viewer.add_image(output_array.T)
+    # viewer.add_labels(mask.values.T.astype(int))
+    # napari.run()
 
 
-    both_kidneys = next((m for m in mask_database if m[1] == study), None)
-    if both_kidneys:
-        both_kidneys = db.volume(both_kidneys)
-        both_kidneys_arr = both_kidneys.values 
-        aff = both_kidneys.affine
-        if site == 'Bari':
-            rk = (both_kidneys_arr==2)
-            lk = (both_kidneys_arr==1)
-        else:
-            rk = (both_kidneys_arr==1)
-            lk = (both_kidneys_arr==2)
 
-        if roi == 'rk':
-            mask_roi = vreg.volume(rk, aff)
-        else:
-            mask_roi = vreg.volume(lk, aff)
+    return output_array
 
-        if maps:
-            try:
-                output = []
-                for path in maps:
-                        volume = db.volume(path)
-                        output.append(volume)
-                clusters, cluster_features = kmeans(output, mask_roi, roi=roi, n_clusters=3, multiple_series=True, return_features=True, site=site, study=study)
-                # Background = cluster with smallest AVD
-                background = np.argmin([c[1] for c in cluster_features])
-                # Cortex = cluster with largest RPF 
-                cortex = np.argmax([c[0] for c in cluster_features]) 
-                # Medulla = cluster with largest MTT 
-                medulla = np.argmax([c[2] for c in cluster_features])
-                # Check
-                remainder = {0,1,2} - {background, cortex, medulla}
-                if len(remainder) > 0:
-                    raise ValueError('Problem separating cortex and medulla: identified clusters do not have the expected values.')
-            except Exception as e:
-                print(f'cannot create mask: {e}')
-            
-            cortex_lk = database + [(series_name + 'LKC', 0)] 
-            medulla_lk = database + [(series_name + 'LKM', 0)]   
-            #background_lk = database + [(series_name + 'LKB', 0)] 
-            lk_cm_desc = database + [(series_name + 'LCM', 0)]
-
-            cortex_rk = database + [(series_name + 'RKC', 0)] 
-            medulla_rk = database + [(series_name + 'RKM', 0)]   
-            #background_rk = database + [(series_name + 'RKB', 0)] 
-            rk_cm_desc = database + [(series_name + 'RCM', 0)]
-
-            aff = both_kidneys.affine
-
-            if roi == 'lk':
-                db.write_volume(clusters[cortex], cortex_lk)
-                db.write_volume(clusters[medulla], medulla_lk)
-                #db.write_volume(clusters[background], background_lk)
-                cm = np.zeros_like(clusters[background].values)
-                cm[clusters[background].values > 0] = 0
-                cm[clusters[cortex].values > 0] = 3
-                cm[clusters[medulla].values > 0] = 4
-                cm_vol = vreg.volume(cm, aff)
-                vplot.overlay_2d_cm(output[0], mask=cm_vol, save_path=mask_png, show=False)
-                db.write_volume(cm_vol, lk_cm_desc)
-            
-            elif roi == 'rk':
-                db.write_volume(clusters[cortex], cortex_rk)
-                db.write_volume(clusters[medulla], medulla_rk)
-                #db.write_volume(clusters[background], background_rk)
-                cm = np.zeros_like(clusters[background].values)
-                cm[clusters[background].values > 0] = 0
-                cm[clusters[cortex].values > 0] = 1
-                cm[clusters[medulla].values > 0] = 2
-                cm_vol = vreg.volume(cm, aff)
-                vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=True)
-                db.write_volume(cm_vol, rk_cm_desc)
-
+#Helper: K-means for CM segmentation
 def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, normalize=True, return_features=False, site=None, study=None):
     """
     Labels structures in an image
@@ -542,6 +199,258 @@ def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, n
 
     return clusters
 
+#______________________________________________MAIN PROTOCOL__________________________________#
+#Step 1: Get data and create a table
+def get_data(site):
+    base_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+    os.makedirs(base_dir, exist_ok=True)
+    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
+    dce_maps_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+
+    # Load series from databases
+    masks_database = db.series(masks_dir)
+    dce_database = db.series(dce_maps_dir)
+
+
+    #Filter out dce maps to align and make sure it is in the order: rpf, avd, mtt
+    rk_maps2fill_database = [
+        entry for entry in dce_database 
+        if entry[3][0].strip().lower() in
+        ('dce_9_rpf_rk_aligned', 'dce_9_avd_rk_aligned', 'dce_9_mtt_rk_aligned' ) 
+    ]
+
+    lk_maps2fill_database = [
+        entry for entry in dce_database 
+        if entry[3][0].strip().lower() in
+        ('dce_9_rpf_lk_aligned', 'dce_9_avd_lk_aligned',  'dce_9_mtt_lk_aligned', ) 
+    ]
+
+
+    # Get unique case identifiers
+    case_id = set(entry[1] for entry in rk_maps2fill_database)
+
+    images_and_masks = []
+    for case_id in sorted(case_id):
+        # Find corresponding mask study
+        mask_path = next((s for s in masks_database if s[1] == case_id), None)
+        if mask_path is None:
+            print(f"Skipping case {case_id}, study not found in mask database.")
+            continue
+        
+        rk_dce_paths = [s for s in rk_maps2fill_database if s[1] == case_id]
+        if rk_dce_paths is None:
+            print(f"Skipping case {case_id}, DCE moco series not found.") 
+        
+        lk_dce_paths = [s for s in lk_maps2fill_database if s[1] == case_id]
+        if lk_dce_paths is None:
+            print(f"Skipping case {case_id}, DCE moco series not found.") 
+
+
+
+        #create data table 
+        images_and_masks.append({
+            'case': case_id,
+            'mask_path': mask_path,            
+            'rk_dce_maps': rk_dce_paths,          
+            'lk_dce_maps': lk_dce_paths
+
+        })
+
+
+
+    # Save the results to file
+    output_path = os.path.join(base_dir, f'{site}_images_masks_table.pkl')
+    with open(output_path, 'wb') as f:
+        pickle.dump(images_and_masks, f)
+    
+    return images_and_masks
+
+
+# Step 2: Main Protocol: Filling Gaps
+def fillgaps(site):
+    
+    images_and_masks = get_data(site)
+    pat_series = []
+    for entry in images_and_masks:
+        study = entry['case']
+        dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+        database = [dest_dir, study, ('Baseline', 0)]
+        series_name = bari_add_series_name(study, pat_series)
+
+
+        rk_rpf_clean = database + [(series_name + "rk_rpf_gaps_filled", 0)]
+        lk_rpf_clean = database + [(series_name + "lk_rpf_gaps_filled", 0)]
+        rk_avd_clean = database + [(series_name + "rk_avd_gaps_filled", 0)]
+        lk_avd_clean = database + [(series_name + "lk_avd_gaps_filled", 0)]
+        rk_mtt_clean = database + [(series_name + "rk_mtt_gaps_filled", 0)]
+        lk_mtt_clean = database + [(series_name + "lk_mtt_gaps_filled", 0)]
+        
+        clean_series = [rk_rpf_clean, lk_rpf_clean,
+                        rk_avd_clean, lk_avd_clean,
+                        rk_mtt_clean, lk_mtt_clean ]
+                
+        if all(x in db.series(database) for x in clean_series):
+            roi = ['lk', 'rk']
+            for kidney in roi:
+                cortex_medulla(site, study, roi=kidney)
+            continue
+
+        # Dictonary
+        mask_path = entry['mask_path']   
+        rk_dce_map_paths = entry['rk_dce_maps']
+        lk_dce_map_paths = entry['lk_dce_maps']
+
+        rk_dce_volumes = []
+        for map_path in rk_dce_map_paths:
+            rk_dce_volume = db.volumes_2d(map_path)
+            rk_dce_volumes.append(rk_dce_volume)
+
+        lk_dce_volumes = []
+        for map_path in lk_dce_map_paths:
+            lk_dce_volume = db.volumes_2d(map_path)
+            lk_dce_volumes.append(lk_dce_volume)
+
+
+        mask = db.volume(mask_path)
+        ref_volume = mask
+        
+        arr = mask.values 
+        lk = (arr==1)
+        rk = (arr==2)
+        
+
+        rk_outputs = []
+        for series in rk_dce_volumes:
+            output_series = fill_slice_gaps(series, ref_volume, mask=rk)
+            rk_outputs.append(output_series)
+        
+        lk_outputs = []
+        for series in lk_dce_volumes:
+            output_series = fill_slice_gaps(series, ref_volume, mask=lk)
+            lk_outputs.append(output_series)
+
+        
+    
+        print('Building RPF Volume...')
+        if rk_rpf_clean not in db.series(database):
+            db.write_volume((rk_outputs[0], rk.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
+
+        if lk_rpf_clean not in db.series(database):
+            db.write_volume((lk_outputs[0], lk.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
+        
+        print('Building AVD Volume...')
+        if rk_avd_clean not in db.series(database):
+            db.write_volume((rk_outputs[1], rk.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
+        
+        if lk_avd_clean not in db.series(database):
+            db.write_volume((lk_outputs[1], lk.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
+
+        print('Building MTT Volume...')
+        if rk_mtt_clean not in db.series(database):
+            db.write_volume((rk_outputs[2], rk.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])        
+        
+        if lk_mtt_clean not in db.series(database):
+            db.write_volume((lk_outputs[2], lk.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
+        
+
+        roi = ['lk', 'rk']
+        for kidney in roi:
+            cortex_medulla(site, study, roi=kidney)
+
+
+#Step 3: Cortex Medulla Mask Creation
+def cortex_medulla(site, study, roi=None): 
+
+    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
+    mask_database = db.series(masks_dir)
+    maps_path = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+    maps_database = db.series(maps_path)
+    maps = [entry for entry in maps_database if entry[3][0].strip().lower() in
+        (f'dce_10_{roi}_rpf_gaps_filled', f'dce_10_{roi}_avd_gaps_filled',  f'dce_10_{roi}_mtt_gaps_filled')] 
+    
+    pat_series = []
+    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+    mask_png = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", 'overlays', f'{study}_{roi}.png')
+    database = [dest_dir, study, ('Baseline', 0)]
+    series_name = bari_add_series_name(study, pat_series)
+
+
+    both_kidneys = next((m for m in mask_database if m[1] == study), None)
+    if both_kidneys:
+        both_kidneys = db.volume(both_kidneys)
+        both_kidneys_arr = both_kidneys.values 
+        aff = both_kidneys.affine
+        if site == 'Bari':
+            rk = (both_kidneys_arr==2)
+            lk = (both_kidneys_arr==1)
+        else:
+            rk = (both_kidneys_arr==1)
+            lk = (both_kidneys_arr==2)
+
+        if roi == 'rk':
+            mask_roi = vreg.volume(rk, aff)
+        else:
+            mask_roi = vreg.volume(lk, aff)
+
+        if maps:
+            try:
+                output = []
+                for path in maps:
+                        volume = db.volume(path)
+                        output.append(volume)
+                clusters, cluster_features = kmeans(output, mask_roi, roi=roi, n_clusters=3, multiple_series=True, return_features=True, site=site, study=study)
+                # Background = cluster with smallest AVD
+                background = np.argmin([c[1] for c in cluster_features])
+                # Cortex = cluster with largest RPF 
+                cortex = np.argmax([c[0] for c in cluster_features]) 
+                # Medulla = cluster with largest MTT 
+                medulla = np.argmax([c[2] for c in cluster_features])
+                # Check
+                remainder = {0,1,2} - {background, cortex, medulla}
+                if len(remainder) > 0:
+                    raise ValueError('Problem separating cortex and medulla: identified clusters do not have the expected values.')
+            except Exception as e:
+                print(f'cannot create mask: {e}')
+            
+            cortex_lk = database + [(series_name + 'LKC', 0)] 
+            medulla_lk = database + [(series_name + 'LKM', 0)]   
+            
+            lk_cm_desc = database + [(series_name + 'LCM', 0)]
+
+            cortex_rk = database + [(series_name + 'RKC', 0)] 
+            medulla_rk = database + [(series_name + 'RKM', 0)]   
+             
+            rk_cm_desc = database + [(series_name + 'RCM', 0)]
+
+            aff = both_kidneys.affine
+
+            if roi == 'lk':
+                db.write_volume(clusters[cortex], cortex_lk)
+                db.write_volume(clusters[medulla], medulla_lk)
+            
+                cm = np.zeros_like(clusters[background].values)
+                cm[clusters[background].values > 0] = 0
+                cm[clusters[cortex].values > 0] = 3
+                cm[clusters[medulla].values > 0] = 4
+                cm_vol = vreg.volume(cm, aff)
+                vplot.overlay_2d_cm(output[0], mask=cm_vol, save_path=mask_png, show=False)
+                db.write_volume(cm_vol, lk_cm_desc)
+            
+            elif roi == 'rk':
+                db.write_volume(clusters[cortex], cortex_rk)
+                db.write_volume(clusters[medulla], medulla_rk)
+                
+                cm = np.zeros_like(clusters[background].values)
+                cm[clusters[background].values > 0] = 0
+                cm[clusters[cortex].values > 0] = 1
+                cm[clusters[medulla].values > 0] = 2
+                cm_vol = vreg.volume(cm, aff)
+                vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=True)
+                db.write_volume(cm_vol, rk_cm_desc)
+
+
+
+#Step 4: Extract cortex and medulla input function and write to dmr
 def extract_mdr_input_function(site, roi=None):
 
 
@@ -740,15 +649,11 @@ def extract_mdr_input_function(site, roi=None):
         pydmr.write(dmr_file, dmr)
     
 
-    
-    
-
-
-
 
 if __name__ == '__main__':
+    get_data('Bari')
     #fillgaps('Bari')
-    roi = ['RK', 'LK']
-    for m in roi:
-        #     cortex_medulla('Bari', study='1128_003', roi=m)
-        extract_mdr_input_function('Bari', roi=m)
+    # roi = ['RK', 'LK']
+    # for m in roi:
+    #     #     cortex_medulla('Bari', study='1128_003', roi=m)
+    #     extract_mdr_input_function('Bari', roi=m)

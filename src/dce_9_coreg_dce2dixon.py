@@ -319,7 +319,7 @@ def _align_2d(site, table_dir=None):
 
     
     pat_series = []
-    for entry in tqdm(images_and_mask_table, desc=f'Coregisterating {site} cases...', unit='case'):
+    for entry in tqdm(images_and_mask_table, desc=f'Aligning {site} DCE to Dixon', unit='case'):
         #retrieve case_id
         case_id = entry['case_id']
         tqdm.write(f'Processing case {case_id}...')
