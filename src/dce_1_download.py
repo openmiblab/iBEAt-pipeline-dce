@@ -19,7 +19,52 @@ def bari_patients():
         value="DCE_kidneys_cor-oblique_fb_wet_pulse",
     )
 
+def bordeaux_patients():
+    username, password = xnat.credentials()
+    xnat.download_scans(
+        xnat_url="https://qib.shef.ac.uk",
+        username=username,
+        password=password,
+        output_dir=path,
+        project_id="BEAt-DKD-WP4-Bordeaux",
+        subject_label="Bordeaux_Patients_Baseline",
+        attr="series_description",
+        value="DCE_kidneys_cor-oblique_fb",
+    )
+
+def leeds_patients():
+    username, password = xnat.credentials()
+    xnat.download_scans(
+        xnat_url="https://qib.shef.ac.uk",
+        username=username,
+        password=password,
+        output_dir=path,
+        project_id="BEAt-DKD-WP4-Leeds",
+        subject_label="Leeds_Patients",
+        attr="parameters/sequence",
+        value="*tfl2d1_16",
+    )
+
+def sheffield_patients():
+    username, password = xnat.credentials()
+    xnat.download_scans(
+        xnat_url="https://qib.shef.ac.uk",
+        username=username,
+        password=password,
+        output_dir=path,
+        project_id="BEAt-DKD-WP4-Sheffield",
+        attr="series_description",
+        value=[
+            # Philips data
+            #"DCE_kidneys_cor-oblique_fb", 
+            # GE data
+            '3D_DISCO_Dyn_kidneys_cor-oblique_fb',
+        ],
+    )
 
 
 if __name__=='__main__':
-    bari_patients()
+    #bari_patients()
+    #leeds_patients()
+    #bordeaux_patients()
+    sheffield_patients()
