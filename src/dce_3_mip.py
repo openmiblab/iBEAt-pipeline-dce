@@ -8,11 +8,10 @@ from tqdm import tqdm
 EXCLUDE = []
 
 #Helper: Add Series Name
-def bari_add_series_name(folder, all_series: list):
+def add_series_name(folder, all_series: list):
     new_series_name = "DCE_3_"
     all_series.append(new_series_name)
     return new_series_name
-
 
 def max_enh(array_4d, n0=15):
     print(array_4d.shape)
@@ -22,11 +21,11 @@ def max_enh(array_4d, n0=15):
     return array_3d 
 
 #Generate Maximum Intensity Projection (MIP)
-def Bari():
+def mip(site):
     datapath = os.path.join(os.getcwd(), 'build', 'dce_2_data')
-    sitedatapath = os.path.join(datapath, "Bari", "Patients")
+    sitedatapath = os.path.join(datapath, site, "Patients")
     dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_3_mip')
-    destpath =  os.path.join(dstdatapath, "Bari", "Patients")
+    destpath =  os.path.join(dstdatapath, site, "Patients")
     os.makedirs(destpath, exist_ok=True)
 
     # Logging setup
@@ -43,7 +42,7 @@ def Bari():
     for study in tqdm(DCE_axial_aorta, desc='Proceesing MIP', unit='case'):
         try:
             #create folder
-            series_name = bari_add_series_name(study[1], pat_series)
+            series_name = add_series_name(study[1], pat_series)
             baseline_path = [destpath, study[1], ('Baseline', 0)]
             mip_clean = baseline_path + [(series_name + "mip", 0)] 
             
@@ -60,7 +59,7 @@ def Bari():
 
 # Call Task Site 
 if __name__ == '__main__':
-    Bari()
+    mip('Bordeaux')
 
 
 

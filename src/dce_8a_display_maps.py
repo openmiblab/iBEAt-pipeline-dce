@@ -72,6 +72,6 @@ def map_display(site, map_type):
 # Call Task 
 if __name__ == '__main__':
     for map_type in ['RPF', 'MTT']:
-        map_display('Bari', map_type=map_type)
+        map_display('Bordeaux', map_type=map_type)
 
 

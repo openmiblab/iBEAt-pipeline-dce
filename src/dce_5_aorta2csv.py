@@ -8,58 +8,31 @@ from tqdm import tqdm
 
 
 # Main Protocol
-def Bari():
+def aorta2csv(site):
 
     #load directories and database
     datapath = os.path.join(os.getcwd(), 'build', 'dce_2_data')
-    imgpath = os.path.join(datapath, "Bari", "Patients")
+    imgpath = os.path.join(datapath, site, "Patients")
     
     maskpath = os.path.join(os.getcwd(), 'build', 'dce_4_aortaseg')
-    segpath = os.path.join(maskpath, "Bari", "Patients")
+    segpath = os.path.join(maskpath, site, "Patients")
     
     dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv')
-    destpath =  os.path.join(dstdatapath, "Bari", "Patients")
+    destpath =  os.path.join(dstdatapath, site, "Patients")
     os.makedirs(destpath, exist_ok=True)
     
     imgdatabase = db.series(imgpath)
-    DCE_aorta = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_1_aorta'.lower()]
+
+    if site == 'Sheffield':
+        DCE_aorta = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_1_kidneys'.lower()]
+    else:
+        DCE_aorta = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_1_aorta'.lower()]
+
     
 
     segdatabase = db.series(segpath)
     
     masks = [entry for entry in segdatabase if entry[3][0].strip().lower() == 'dce_4_aortaseg'.lower()]
-    
-    
-    # def extract_times():
-    #     results = []
-    #     for study in DCE_aorta:
-    #         aorta  = db.volume(study, dims='AcquisitionTime') 
-    #         times_array = aorta.coords
-    #         times = [t for sublist in times_array for t in sublist]
-    #         results.append((study[1], times))
-    
-    #     return results
-    
-    # def extract_array():
-    #     results = []
-    #     for study in DCE_aorta:
-    #         aorta  = db.volume(study, dims='AcquisitionTime') 
-    #         pixel_array = aorta.values
-    #         results.append((study[1], pixel_array))
-        
-    #     return results
-    
-    # def extract_masks():
-    #     results = []
-    #     for study in masks:
-    #         mask = db.volume(study)
-    #         mask_array = mask.values
-    #         results.append((study[1], mask_array))
-    #     return results
-    
-
-    # images = extract_array()
-    # labels = extract_masks()
 
 
     aif_results = {}
@@ -69,7 +42,10 @@ def Bari():
         case_id = study[1]
         label = next((m for m in masks if m[1] == case_id), None)
         if label is not None:
-            aorta = db.volume(study, dims='AcquisitionTime')
+            if site == 'Sheffield':
+                aorta = db.volume(study, dims='TriggerTime')                               
+            else:
+                aorta = db.volume(study, dims='AcquisitionTime')
             img = aorta.values
             times = aorta.coords
             times = [t for sublist in times for t in sublist]
@@ -87,18 +63,33 @@ def Bari():
                 continue
 
             # Handle 3D time-series (time, y, x)
-            if img.ndim == 3:
-                aif_curve = []
-                for t in range(img.shape[0]):
-                    frame = np.squeeze(img[t])
-                    masked_frame = frame * mask
-                    mean_val = masked_frame[mask > 0].mean()
-                    aif_curve.append(mean_val)
+            if site =='Sheffield':
+                mask = mask.astype(bool)
+                aif_means = []
+                # compute slice-wise mean intensities for each timepoint
+                for t in range(img.shape[-1]):  # loop over time frames
+                    t_means = []
+                    for z in range(img.shape[2]):  # loop over slices
+                        masked_values = img[:, :, z, t][mask[:, :, z]]
+                        t_means.append(masked_values.mean() if masked_values.size > 0 else np.nan)
+                    aif_means.append(t_means)
+                # average across slices (shape: n_timepoints,)
+                aif_int = np.nanmean(aif_means, axis=1)
+                aif_results[case_id] = aif_int
+                continue  
+            elif site == 'Bari' or 'Boredeaux' or 'Leeds':           
+                if img.ndim == 3:
+                    aif_curve = []
+                    for t in range(img.shape[0]):
+                        frame = np.squeeze(img[t])
+                        masked_frame = frame * mask
+                        mean_val = masked_frame[mask > 0].mean()
+                        aif_curve.append(mean_val)
 
-                # Handle single-frame 2D image
-            elif img.ndim == 2:
-                masked_frame = img * mask
-                aif_curve = [masked_frame[mask > 0].mean()]
+                    # Handle single-frame 2D image
+                elif img.ndim == 2:
+                    masked_frame = img * mask
+                    aif_curve = [masked_frame[mask > 0].mean()]
 
             else:
                 raise ValueError(f"Unsupported image shape: {img.shape}")
@@ -109,45 +100,6 @@ def Bari():
 
 
 
-
-    # for case_id, img in images:   # unpack dict
-    #     # Find corresponding mask (also a list of tuples)
-    #     mask_dict = next((m for m in labels if m[0] == case_id), None)
-    #     if mask_dict is not None:
-    #         mask = np.squeeze(mask_dict[1])  # remove singleton dims
-    #         img  = np.squeeze(img)
-
-    #         if img.ndim == 3 and img.shape[-1] > 1:  # (384, 384, T)
-    #             img = np.transpose(img, (2, 0, 1)) #time first
-           
-    #         # Skip empty masks
-    #         if not np.any(mask > 0):
-    #             print(f"Mask for case {case_id} is empty")
-    #             continue
-
-    #         # Handle 3D time-series (time, y, x)
-    #         if img.ndim == 3:
-    #             aif_curve = []
-    #             for t in range(img.shape[0]):
-    #                 frame = np.squeeze(img[t])
-    #                 masked_frame = frame * mask
-    #                 mean_val = masked_frame[mask > 0].mean()
-    #                 aif_curve.append(mean_val)
-
-    #         # Handle single-frame 2D image
-    #         elif img.ndim == 2:
-    #             masked_frame = img * mask
-    #             aif_curve = [masked_frame[mask > 0].mean()]
-
-    #         else:
-    #             raise ValueError(f"Unsupported image shape: {img.shape}")
-
-    #         aif_results[case_id] = aif_curve
-    #     else:
-    #         print(f"No mask found for case {case_id}")
-
-    # study_times = extract_times()
-
     for case_id, aif_curve in aif_results.items():
         # Find corresponding times for this case
         time_tuple = next((t for t in study_times if t[0] == case_id), None)
@@ -157,6 +109,8 @@ def Bari():
     
         times = np.array(time_tuple[1], dtype=float)
         times = times - times[0]  # normalize so first time = 0
+        if site == 'Sheffield':
+            times /= 1000 #convert msec to sec
     
         # Ensure same length as curve
         if len(times) != len(aif_curve):
@@ -185,7 +139,7 @@ def Bari():
 
     #Save to DMR File
         roi = 'aorta' 
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', 'Bari', "Patients") 
+        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients") 
         dmr_file = os.path.join(data_dir, 'DMR', case_id,  f"{case_id}_aif")
 
         dmr = {'data':{}, 'pars':{}, 'rois':{}}
@@ -197,4 +151,5 @@ def Bari():
 
 #Call Task
 if __name__ == '__main__':
-    Bari()
+    aorta2csv('Sheffield')
+

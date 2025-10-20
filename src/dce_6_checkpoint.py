@@ -87,16 +87,16 @@ def plot_aif_mosaic(folder_path, destpath):
     print(f"Saved AIF mosaic {out_path}")
 
 # Main Protocol 
-def Bari():
+def checkpoint(site):
     #load directories and databases
     datapath = os.path.join(os.getcwd(), 'build', 'dce_3_mip')
-    imgpath = os.path.join(datapath, "Bari", "Patients")
+    imgpath = os.path.join(datapath, site, "Patients")
     
     dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_6_checkpoint')
-    destpath =  os.path.join(dstdatapath, "Bari", "Patients")
+    destpath =  os.path.join(dstdatapath, site, "Patients")
     os.makedirs(destpath, exist_ok=True)
 
-    csvpath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', "Bari", "Patients")
+    csvpath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', site, "Patients")
 
     imgdatabase = db.series(imgpath)
     DCE_mip = [entry for entry in imgdatabase if entry[3][0].strip().lower() == 'dce_3_mip']
@@ -109,9 +109,12 @@ def Bari():
         images.append((case_id, array)) 
 
     # Plot *one mosaic* with all cases
-    plot_mip_mosaic(images, destpath)
-    plot_aif_mosaic(csvpath, destpath)
+    if site == 'Sheffield':
+        plot_aif_mosaic(csvpath, destpath)
+    else:
+        plot_mip_mosaic(images, destpath)
+        plot_aif_mosaic(csvpath, destpath)
 
 # Call Task
 if __name__ == '__main__':
-    Bari()
+    checkpoint('Sheffield')

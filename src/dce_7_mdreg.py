@@ -218,7 +218,7 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
     tqdm.write(f"Processing {len(batch_table)} cases from {first_case_id} to {last_case_id}")
 
         
-    for entry in batch_table:
+    for entry in tqdm(batch_table, desc=f'Processing {site} MDREG', unit='case'):
         
         # Working Checkpoint Directory
         case = entry['case_id']
@@ -242,8 +242,17 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
         
         try:
             if iteration == 0:
-                img_vol = db.volume(study, dims=['AcquisitionTime'])
-                array = img_vol.values
+                if site == 'Bari':
+                    img_vol = db.volume(study, dims=['AcquisitionTime'])
+                    array = img_vol.values
+                elif site == 'Bordeaux':
+                    img_vol = db.volumes_2d(study, dims=['AcquisitionTime'])
+                    array = []
+                    for vol in img_vol:
+                        arr = vol.values
+                        array.append(arr)
+                    array = np.stack(array, axis=2)
+                    array = array.squeeze()
         except Exception as e:
             tqdm.write(f'Skipping case {case}. Cannot load volume. {e}')
             continue
@@ -313,7 +322,139 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
                 pickle.dump(mdr_table, f)
 
             tqdm.write(f"Case {case} checkpoint saved. Total completed: {iter_num}")    
+
+def _mdr_3d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
+
+
+    mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 'Patients', f"{site}_moco_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
+
+    if os.path.exists(mdr_table_path):
+        with open(mdr_table_path, "rb") as f:
+            mdr_table = pickle.load(f)
+    else:
+        print('No existing MDR Table to process')
+    
+    if end_case is None:
+        end_case = len(mdr_table)
+
+    batch_table = mdr_table[start_case:end_case+1]
+
+    first_case_id = batch_table[0]['case_id']
+    last_case_id = batch_table[-1]['case_id']
+    tqdm.write(f"Processing {len(batch_table)} cases from {first_case_id} to {last_case_id}")
+
+    for entry in tqdm(batch_table, desc=f'Processing Model Registration for {site} cases', unit='case'):
         
+        # Working Checkpoint Directory
+        case = entry['case_id']
+        checkpoint_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 'Patients', case, 'Checkpoint')
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # WORKING CASE - BEGIN MDREG
+        study = entry['study'],
+        iteration = entry['iteration']
+
+        times_and_aif = load_aif(site)
+        aif = load_aif(site)
+        aif = next((v for v in times_and_aif if v[0] == case), None)
+        aif_values = aif[2].tolist()
+        fit_deconv = {
+                'func': mdreg.fit_deconvolution,
+                'aif': aif_values,
+                'n0': 15,
+                'tol': 0.2,
+            }
+        fit_skimage = {
+                'package': 'skimage',
+                'attachment': 10,
+                'parallel': False,
+                'progress_bar': True,  
+            }
+        
+            # # Coregistration options
+        fit_ants = {
+            'package': 'ants',
+            'type_of_transform': 'SyNOnly',
+            'parallel': False,
+            'progress_bar': True,  
+        }
+        
+        last_iter = iteration
+
+        if last_iter == 0:
+            img_vol = db.volume(study[0], dims=['TriggerTime'])
+            array = img_vol.values
+
+            
+        for iter_num in range(last_iter + 1, maximum_it + 1):
+            # reload from previous iteration
+            if iter_num > 1:
+                array = np.load(os.path.join(checkpoint_dir, f"{case}_coreg_iter_{iter_num}.npy"))
+            
+            # mdreg
+            try:
+
+                coreg, defo, model_fit, pars = mdreg.fit(
+                    moving=array,
+                    fit_coreg=fit_ants,
+                    fit_image=fit_deconv,
+                    maxit=1,
+                    verbose=2,
+                    )
+
+                coreg_total, defo_total, model_fit_total, pars_total = coreg, defo, model_fit, pars
+
+                # Save per iteration
+                np.save(os.path.join(checkpoint_dir, f"{case}_coreg_iter_{iter_num}.npy"), coreg_total)
+                np.save(os.path.join(checkpoint_dir, f"{case}_defo_iter_{iter_num}.npy"), defo_total)
+                np.save(os.path.join(checkpoint_dir, f"{case}_model_fit_iter_{iter_num}.npy"), model_fit_total)
+                with open(os.path.join(checkpoint_dir, f"{case}_pars_iter_{iter_num}.pkl"), "wb") as f:
+                    pickle.dump(pars_total, f)
+
+                tqdm.write(f"Saved iteration {iter_num} for case {case}")
+
+            except Exception as e:
+                logging.error(f"Iteration {iter_num} failed for case {case}: {e}")
+                break
+        
+            def existing_paths(checkpoint_dir, case, prefix, ext, maxit=5):
+                return [
+                        os.path.join(checkpoint_dir, f"{case}_{prefix}_iter_{i}{ext}")
+                        for i in range(1, maxit+1)
+                        if os.path.exists(os.path.join(checkpoint_dir, f"{case}_{prefix}_iter_{i}{ext}"))
+                        ]
+
+            new_entry = {
+                "case": case,
+                "study": study,
+                "paths": {
+                "coreg": existing_paths(checkpoint_dir, case, "coreg", ".npy"),
+                "defo": existing_paths(checkpoint_dir, case, "defo", ".npy"),
+                "model_fit": existing_paths(checkpoint_dir, case, "model_fit", ".npy"),
+                "pars": existing_paths(checkpoint_dir, case, "pars", ".pkl"),
+                    },
+                "iteration": iter_num + 1,
+            }
+
+            # Save checkpoint files
+            try:
+                checkpoint_file = os.path.join(checkpoint_dir, f'{site}_moco_table.pkl')
+                with open(checkpoint_file, "rb") as f:
+                    checkpoint_file = pickle.load(f)
+            except (FileNotFoundError, EOFError):
+                moco_table = []
+
+            # Remove any old entries for this case
+            moco_table = [e for e in checkpoint_file if e["case"] != case]
+
+            # Add the new clean entry
+            moco_table.append(new_entry)
+
+            # Save checkpoint after each case
+            with open(checkpoint_file, "wb") as f:
+                pickle.dump(moco_table, f)
+    tqdm.write(f"Case {case} checkpoint saved. Total completed: {iter_num}")  
+
 
 def write_2_folder(site, batch_no=None):
     mdr_table_path = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, 
@@ -395,33 +536,31 @@ def write_2_folder(site, batch_no=None):
                 print(f'Checkpoint outputs Defo and Model fit are swapped for case {case}. Please Check. Switching...')
 
             # Extract metadata from image
-            image = db.volume(study, 'AcquisitionTime')
-            if image is not None:
-                affine = image.affine
-                coords = image.coords
-                
-            # image_vols = db.volumes_2d(study, 'AcquisitionTime')
-            # if image_vols is not None:
-            #     affines = []
-            #     coords = []
-            #     for vol in image_vols:
-            #         affine = vol.affine
-            #         coord = vol.coords
-            #         affines.append(affine)
-            #         coords.append(coord)
+            if site =='Bari':
+                image = db.volume(study, 'AcquisitionTime')
+                if image is not None:
+                    affine = image.affine
+                    coords = image.coords
+            elif site=='Bordeaux':
+                image_vols = db.volumes_2d(study, 'AcquisitionTime')
+                if image_vols is not None:
+                    for vol in image_vols:
+                        affine = vol.affine
+                        coords = vol.coords
+                        break
 
             #_______________MOCO________________
 
             tqdm.write('Building MoCo series...')
             #vol = coreg 
-            if site == 'Bari':
+            if site == 'Bari' or 'Bordeaux':
                 try:
                     if coreg is not None:
                         if mdr_clean not in db.series(base_dir):
                             volume = vreg.volume(coreg, affine, coords, dims=['AcquisitionTime'])
                             db.write_volume(volume, mdr_clean, ref=study, append=True)
                 except Exception as e:
-                    logging.error(f'Cannot build MoCo series: {e}')                
+                    logging.error(f'Cannot build MoCo series: {e}')               
 
             # elif site == 'Leeds':
             #     volume = vreg.volume(, affine, coords, dims=['InstanceNumber'])
@@ -467,14 +606,16 @@ def write_2_folder(site, batch_no=None):
 
 if __name__ == '__main__':
     #Step: 1 - Prep DCE
-    #dce_to_process('Bari')
+    dce_to_process('Sheffield')
 
-    #Step: 2 - 2D MDREG 
-    #_mdr_2d('Bari')
+    #Step: 2 - 2D/3D MDREG 
+    #_mdr_2d('Bordeaux')
+    _mdr_3d('Sheffield')
+
 
     #Optional - Recommended if running in batches, before writing files to DICOM
     #rebuild_mdr_table('Bari')
 
     # Step 3 - Write Files to DICOM
-    write_2_folder('Bari')
+    #write_2_folder('Bordeaux')
 

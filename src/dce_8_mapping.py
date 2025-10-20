@@ -87,7 +87,7 @@ def Mapping(site):
                     continue
 
                 #load moco_dicom 
-                if site == 'Bari':              
+                if site == 'Bari' or 'Bordeaux':              
                     # get array, affine coords from moco dce
                     vol = db.volume(study, dims=['AcquisitionTime'])
                     array = vol.values
@@ -232,4 +232,4 @@ def Mapping(site):
  
 #Call Task
 if __name__ == '__main__':
-    Mapping('Bari')
+    Mapping('Bordeaux')

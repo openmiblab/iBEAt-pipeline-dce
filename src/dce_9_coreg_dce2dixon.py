@@ -31,6 +31,10 @@ def _get_data(site, table_dir=None, batch_no=None):
 
     # Load masks and series from databases
     mask_database = db.series(masks_dir)
+    if site =='Bordeaux':
+        mask_database = [study for study in mask_database if study[2][0] == 'Baseline']
+
+    
     mdr_database = db.series(mdr_dir, desc='DCE_7_mdr_moco')
     auc_database = db.series(dce_maps_dir, desc='DCE_8_AUC_map')
     rpf_database = db.series(dce_maps_dir, desc='DCE_8_RPF_map')
@@ -40,7 +44,7 @@ def _get_data(site, table_dir=None, batch_no=None):
     
 
     # Get unique case identifiers
-    cases_ids = set(entry[1] for entry in mdr_database)
+    cases_ids = set(entry[1] for entry in mask_database)
 
     images_and_masks = []
     for case_id in sorted(cases_ids):
@@ -51,28 +55,35 @@ def _get_data(site, table_dir=None, batch_no=None):
             tqdm.write(f"Skipping case {case_id}, case_id not found in mask database.")
             continue
         # Find corresponding mask case_id
-        mdr_moco_path = next((img for img in mdr_database if img[1] == case_id), None)
+        if site == 'Bordeaux':
+            mdr_moco_path = next((img for img in mdr_database if case_id in img[1]), None)
+        else:
+            mdr_moco_path = next((img for img in mdr_database if img[1] == case_id), None)
+        
         if mdr_moco_path is None:
             tqdm.write(f"Skipping case {case_id}, DCE mdr series not found.") 
             continue 
 
         # Find corresponding DCE maps
-        auc_map_path = [_map for _map in auc_database if _map[1] == case_id]
+        if site == 'Bordeaux':
+            auc_map_path = [_map for _map in auc_database if case_id in _map[1]]
+            rpf_map_path = [_map for _map in rpf_database if case_id in _map[1]]
+            avd_map_path = [_map for _map in avd_database if case_id in _map[1]]
+            mtt_map_path = [_map for _map in mtt_database if case_id in _map[1]]
+        else:
+            auc_map_path = [_map for _map in auc_database if _map[1] == case_id]
+            rpf_map_path = [_map for _map in rpf_database if _map[1] == case_id]
+            avd_map_path = [_map for _map in avd_database if _map[1] == case_id]
+            mtt_map_path = [_map for _map in mtt_database if _map[1] == case_id]
+        
         if not auc_map_path:
-            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
-            continue
-        rpf_map_path = [_map for _map in rpf_database if _map[1] == case_id]
+            tqdm.write(f"Caution! {case_id} auc map not found.")  
         if not rpf_map_path:
-            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
-            continue
-        avd_map_path = [_map for _map in avd_database if _map[1] == case_id]
+            tqdm.write(f"Caution! {case_id} rpf map not found.")  
         if not avd_map_path:
-            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
-            continue
-        mtt_map_path = [_map for _map in mtt_database if _map[1] == case_id]
+            tqdm.write(f"Caution! {case_id} avd map not found.")  
         if not mtt_map_path:
-            tqdm.write(f"Skipping case {case_id}, DCE maps not found.")  
-            continue
+            tqdm.write(f"Caution! {case_id} mtt map not found.")  
 
 
         #Create Data Table 
@@ -320,7 +331,7 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
             tqdm.write('Creating new dce img + mask inventory...')
             images_and_mask_table = _get_data(site, table_dir)
 
-    batch_table = images_and_mask_table[start_case:end_case+1]
+    batch_table = images_and_mask_table[start_case:end_case]
 
     first_case_id = batch_table[0]['case_id']
     last_case_id = batch_table[-1]['case_id']
@@ -578,6 +589,6 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
 
 
 if __name__ == '__main__':
-    #_get_data('Bari')
-    _align_2d('Bari')
+    #_get_data('Bordeaux')
+    _align_2d('Bordeaux')
 

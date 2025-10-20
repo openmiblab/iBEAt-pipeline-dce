@@ -53,8 +53,8 @@ def fill_gaps_zonly(input_array, input_geom, sigma_z=1.5):
 #Helper: Slice like reference before filling gaps
 def fill_slice_gaps(series, ref, mask=None):
 
-    ref_volume = mask
-    mask_arr = mask.values
+    ref_volume = ref
+    #mask_arr = mask.values
     contrast_limits = [0, 300]
     input_array = np.zeros(ref_volume.shape)
     input_count = np.zeros(ref_volume.shape)
@@ -210,6 +210,9 @@ def get_data(site):
     # Load series from databases
     masks_database = db.series(masks_dir)
     dce_database = db.series(dce_maps_dir)
+    
+    if site =='Bordeaux':
+        masks_database = [study for study in masks_database if study[2][0] == 'Baseline']
 
 
     #Filter out dce maps to align and make sure it is in the order: rpf, avd, mtt
@@ -266,7 +269,7 @@ def get_data(site):
     return images_and_masks
 
 
-# Step 2: Main Protocol: Filling Gaps
+#Main Protocol: Filling Gaps + Build Cortex/Medulla masks
 def fillgaps(site):
     
     images_and_masks = get_data(site)
@@ -333,24 +336,24 @@ def fillgaps(site):
     
         print('Building RPF Volume...')
         if rk_rpf_clean not in db.series(database):
-            db.write_volume((rk_outputs[0], rk.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
+            db.write_volume((rk_outputs[0], mask.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
 
         if lk_rpf_clean not in db.series(database):
-            db.write_volume((lk_outputs[0], lk.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
+            db.write_volume((lk_outputs[0], mask.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
         
         print('Building AVD Volume...')
         if rk_avd_clean not in db.series(database):
-            db.write_volume((rk_outputs[1], rk.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
+            db.write_volume((rk_outputs[1], mask.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
         
         if lk_avd_clean not in db.series(database):
-            db.write_volume((lk_outputs[1], lk.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
+            db.write_volume((lk_outputs[1], mask.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
 
         print('Building MTT Volume...')
         if rk_mtt_clean not in db.series(database):
-            db.write_volume((rk_outputs[2], rk.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])        
+            db.write_volume((rk_outputs[2], mask.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])        
         
         if lk_mtt_clean not in db.series(database):
-            db.write_volume((lk_outputs[2], lk.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
+            db.write_volume((lk_outputs[2], mask.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
         
 
         roi = ['lk', 'rk']
@@ -380,16 +383,13 @@ def cortex_medulla(site, study, roi=None):
         both_kidneys = db.volume(both_kidneys)
         both_kidneys_arr = both_kidneys.values 
         aff = both_kidneys.affine
-        if site == 'Bari':
-            rk = (both_kidneys_arr==2)
-            lk = (both_kidneys_arr==1)
-        else:
-            rk = (both_kidneys_arr==1)
-            lk = (both_kidneys_arr==2)
+
+        rk = (both_kidneys_arr==1)
+        lk = (both_kidneys_arr==2)
 
         if roi == 'rk':
             mask_roi = vreg.volume(rk, aff)
-        else:
+        elif roi =='lk':
             mask_roi = vreg.volume(lk, aff)
 
         if maps:
@@ -423,30 +423,32 @@ def cortex_medulla(site, study, roi=None):
             rk_cm_desc = database + [(series_name + 'RCM', 0)]
 
             aff = both_kidneys.affine
-
-            if roi == 'lk':
-                db.write_volume(clusters[cortex], cortex_lk)
-                db.write_volume(clusters[medulla], medulla_lk)
-            
-                cm = np.zeros_like(clusters[background].values)
-                cm[clusters[background].values > 0] = 0
-                cm[clusters[cortex].values > 0] = 3
-                cm[clusters[medulla].values > 0] = 4
-                cm_vol = vreg.volume(cm, aff)
-                vplot.overlay_2d_cm(output[0], mask=cm_vol, save_path=mask_png, show=False)
-                db.write_volume(cm_vol, lk_cm_desc)
-            
-            elif roi == 'rk':
-                db.write_volume(clusters[cortex], cortex_rk)
-                db.write_volume(clusters[medulla], medulla_rk)
+            try:
+                if roi == 'lk':
+                    db.write_volume(clusters[cortex], cortex_lk)
+                    db.write_volume(clusters[medulla], medulla_lk)
                 
-                cm = np.zeros_like(clusters[background].values)
-                cm[clusters[background].values > 0] = 0
-                cm[clusters[cortex].values > 0] = 1
-                cm[clusters[medulla].values > 0] = 2
-                cm_vol = vreg.volume(cm, aff)
-                vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=True)
-                db.write_volume(cm_vol, rk_cm_desc)
+                    cm = np.zeros_like(clusters[background].values)
+                    cm[clusters[background].values > 0] = 0
+                    cm[clusters[cortex].values > 0] = 3
+                    cm[clusters[medulla].values > 0] = 4
+                    cm_vol = vreg.volume(cm, aff)
+                    vplot.overlay_2d_cm(output[0], mask=cm_vol, save_path=mask_png, show=False)
+                    db.write_volume(cm_vol, lk_cm_desc)
+                
+                elif roi == 'rk':
+                    db.write_volume(clusters[cortex], cortex_rk)
+                    db.write_volume(clusters[medulla], medulla_rk)
+                    
+                    cm = np.zeros_like(clusters[background].values)
+                    cm[clusters[background].values > 0] = 0
+                    cm[clusters[cortex].values > 0] = 1
+                    cm[clusters[medulla].values > 0] = 2
+                    cm_vol = vreg.volume(cm, aff)
+                    vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=False)
+                    db.write_volume(cm_vol, rk_cm_desc)
+            except Exception as e:
+                tqdm.write(f'Cannot create {roi} volume for {study}: {e}')
 
 
 
@@ -533,8 +535,8 @@ def extract_mdr_input_function(site, roi=None):
     print('Extracting Labels to Align...')
     labels, rk_vol, lk_vol = extract_labels(roi=roi)
 
-    for label in tqdm(labels, desc=f'Processing {roi} Cortex Masks', unit="label"):
-        cortex_masks_on_mdr = cortex_on_mdr(cortex_vol=label, roi=roi)
+    # for label in tqdm(labels, desc=f'Processing {roi} Cortex Masks', unit="label"):
+    #     cortex_masks_on_mdr = cortex_on_mdr(cortex_vol=label, roi=roi)
     
 
 
@@ -560,7 +562,15 @@ def extract_mdr_input_function(site, roi=None):
             print(f'No aligned {roi} mdr series found')
             continue
         
-        mask = next(m for m in cortex_masks_on_mdr if m[0] == case_id)
+        if roi == 'LK':
+            mask = next(m for m in lk_vol if m[0] == case_id)
+        else:
+            tqdm.write(f'No lk mask found for case {case_id}')
+        
+        if roi == 'RK':
+            mask = next(m for m in lk_vol if m[0] == case_id)
+        else:
+            tqdm.write(f'No rk mask found for case {case_id}')       
         
         if mask is not None:
             # get 4D volume: (x, y, z, t)
@@ -651,9 +661,9 @@ def extract_mdr_input_function(site, roi=None):
 
 
 if __name__ == '__main__':
-    get_data('Bari')
-    #fillgaps('Bari')
+    #get_data('Bari')
+    fillgaps('Bordeaux')
     # roi = ['RK', 'LK']
     # for m in roi:
-    #     #     cortex_medulla('Bari', study='1128_003', roi=m)
+    # #     #     cortex_medulla('Bari', study='1128_003', roi=m)
     #     extract_mdr_input_function('Bari', roi=m)
