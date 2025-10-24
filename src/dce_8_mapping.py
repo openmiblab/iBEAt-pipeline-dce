@@ -87,13 +87,18 @@ def Mapping(site):
                     continue
 
                 #load moco_dicom 
-                if site == 'Bari' or 'Bordeaux':              
+                if site in ('Bari', 'Bordeaux'):              
                     # get array, affine coords from moco dce
                     vol = db.volume(study, dims=['AcquisitionTime'])
                     array = vol.values
                     affine = vol.affine
                     coords = vol.coords
-
+                
+                elif site == 'Sheffield':
+                    vol = db.volume(study, dims=['TriggerTime'])
+                    array = vol.values
+                    affine = vol.affine
+                    coords = vol.coords
 
                 # load aif curve from csv
                 aif_data = pd.read_csv(os.path.join(aif_path, aif_file))
@@ -232,4 +237,4 @@ def Mapping(site):
  
 #Call Task
 if __name__ == '__main__':
-    Mapping('Bordeaux')
+    Mapping('Sheffield')

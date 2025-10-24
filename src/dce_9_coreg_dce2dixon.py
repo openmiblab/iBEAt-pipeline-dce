@@ -234,8 +234,11 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
 
         # 4. Load the map (placeholder for your actual map loading)
         try:
-            if 'mdr'.lower() in map[3][0]:
-                map_vols = db.volumes_2d(map, 'AcquisitionTime')
+            if 'mdr'.lower() in map:
+                if site == 'Sheffield':
+                    map_vols = db.volumes_2d(map, 'TriggerTime')
+                else:
+                    map_vols = db.volumes_2d(map, 'AcquisitionTime')
             else:
                 map_vols = db.volumes_2d(map[0])
         except Exception as e:
@@ -243,11 +246,14 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
             
     
         
-        if map_vols:
+        if map_vols is not None:
             try:
                 for aff, s in zip(affine, map_vols):
-                    if 'mdr'.lower() in map[3][0]:
-                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
+                    if 'mdr'.lower() in map:
+                        if site == 'Sheffield':
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
+                        else:    
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                         db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
                     else:
                         new_slice_vol = vreg.volume(s.values, aff) 
@@ -510,11 +516,18 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
 
             # Create MDR volume
             tqdm.write('Building aligned MDR series...')
-            mdr_slice_vols = db.volumes_2d(mdr_path, 'AcquisitionTime')
+            if site == 'Sheffield':
+                mdr_slice_vols = db.volumes_2d(mdr_path, 'TriggerTime')
+            else:
+                mdr_slice_vols = db.volumes_2d(mdr_path, 'AcquisitionTime')
+            
             if mdr_clean_rk not in db.series(database):
                 try:
                     for aff, s in zip(affine['RK'], mdr_slice_vols):
-                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
+                        if site == 'Sheffield':
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
+                        else:
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                         db.write_volume(new_slice_vol, mdr_clean_rk, ref=mdr_path, append=True)
                 except Exception as e:
                     logging.error(f'cannot build MDR RK for {case_id}: {e}')
@@ -522,7 +535,10 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
             if mdr_clean_lk not in db.series(database):
                 try:
                     for aff, s in zip(affine['LK'], mdr_slice_vols):
-                        new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
+                        if site == 'Sheffield':
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
+                        else:    
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                         db.write_volume(new_slice_vol, mdr_clean_lk, ref=mdr_path, append=True)
                 except Exception as e:
                     logging.error(f'cannot build MDR LK for {case_id}: {e}')        
@@ -590,5 +606,5 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
 
 if __name__ == '__main__':
     #_get_data('Bordeaux')
-    _align_2d('Bordeaux')
+    _align_2d('Sheffield')
 
