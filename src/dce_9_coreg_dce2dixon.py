@@ -18,54 +18,71 @@ def bari_add_series_name(folder, all_series: list):
     all_series.append(new_series_name)
     return new_series_name
 
-#Helper: create img + mask inventory
+# Helper: create img + mask inventory
 def _get_data(site, table_dir=None, batch_no=None):
+    # build table_dir
     if table_dir is None:
-        table_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
-    os.makedirs(table_dir, exist_ok=True)  
+        parts = [os.getcwd(), "build", "dce_9_coreg_dce2dixon", site, "Patients"]
+        if batch_no is not None:
+            parts.append(f"Batch_{batch_no}")
+        table_dir = os.path.join(*parts)
+    os.makedirs(table_dir, exist_ok=True)
 
-    base_path = os.path.join(os.getcwd(), 'build')
-    masks_dir = os.path.join(base_path, 'kidneyvol_3_edit', site, 'Patients')
-    dce_maps_dir = os.path.join(base_path, 'dce_8_mapping', site, "Patients")
-    mdr_dir = os.path.join(base_path, 'dce_7_mdreg', site, "Patients")
+    base_path = os.path.join(os.getcwd(), "build")
+
+    # masks
+    parts_masks = [base_path, "kidneyvol_3_edit", site, "Patients"]
+    if batch_no is not None:
+        parts_masks.append(f"Batch_{batch_no}")
+    masks_dir = os.path.join(*parts_masks)
+
+    # dce maps
+    parts_maps = [base_path, "dce_8_mapping", site, "Patients"]
+    if batch_no is not None:
+        parts_maps.append(f"Batch_{batch_no}")
+    dce_maps_dir = os.path.join(*parts_maps)
+
+    # mdr dir
+    parts_mdr = [base_path, "dce_7_mdreg", site, "Patients"]
+    if batch_no is not None:
+        parts_mdr.append(f"Batch_{batch_no}")
+    mdr_dir = os.path.join(*parts_mdr)
 
     # Load masks and series from databases
     mask_database = db.series(masks_dir)
-    if site =='Bordeaux':
-        mask_database = [study for study in mask_database if study[2][0] == 'Baseline']
+    if site == "Bordeaux":
+        mask_database = [study for study in mask_database if study[2][0] == "Baseline"]
 
-    
-    mdr_database = db.series(mdr_dir, desc='DCE_7_mdr_moco')
-    auc_database = db.series(dce_maps_dir, desc='DCE_8_AUC_map')
-    rpf_database = db.series(dce_maps_dir, desc='DCE_8_RPF_map')
-    avd_database = db.series(dce_maps_dir, desc='DCE_8_AVD_map')
-    mtt_database = db.series(dce_maps_dir, desc='DCE_8_MTT_map')
-
-    
+    mdr_database = db.series(mdr_dir, desc="DCE_7_mdr_moco")
+    auc_database = db.series(dce_maps_dir, desc="DCE_8_AUC_map")
+    rpf_database = db.series(dce_maps_dir, desc="DCE_8_RPF_map")
+    avd_database = db.series(dce_maps_dir, desc="DCE_8_AVD_map")
+    mtt_database = db.series(dce_maps_dir, desc="DCE_8_MTT_map")
 
     # Get unique case identifiers
     cases_ids = set(entry[1] for entry in mask_database)
 
+    tqdm.write(f'Processing Batch No {batch_no}: Cases - {sorted(cases_ids)}')
+
     images_and_masks = []
     for case_id in sorted(cases_ids):
-        
         # Find corresponding mask case_id
         mask_path = next((m for m in mask_database if m[1] == case_id), None)
         if mask_path is None:
             tqdm.write(f"Skipping case {case_id}, case_id not found in mask database.")
             continue
-        # Find corresponding mask case_id
-        if site == 'Bordeaux':
+
+        # Find corresponding mdr path
+        if site == "Bordeaux":
             mdr_moco_path = next((img for img in mdr_database if case_id in img[1]), None)
         else:
             mdr_moco_path = next((img for img in mdr_database if img[1] == case_id), None)
-        
+
         if mdr_moco_path is None:
-            tqdm.write(f"Skipping case {case_id}, DCE mdr series not found.") 
-            continue 
+            tqdm.write(f"Caution! {case_id} DCE mdr series not found.")
 
         # Find corresponding DCE maps
-        if site == 'Bordeaux':
+        if site == "Bordeaux":
             auc_map_path = [_map for _map in auc_database if case_id in _map[1]]
             rpf_map_path = [_map for _map in rpf_database if case_id in _map[1]]
             avd_map_path = [_map for _map in avd_database if case_id in _map[1]]
@@ -75,38 +92,42 @@ def _get_data(site, table_dir=None, batch_no=None):
             rpf_map_path = [_map for _map in rpf_database if _map[1] == case_id]
             avd_map_path = [_map for _map in avd_database if _map[1] == case_id]
             mtt_map_path = [_map for _map in mtt_database if _map[1] == case_id]
-        
+
         if not auc_map_path:
-            tqdm.write(f"Caution! {case_id} auc map not found.")  
+            tqdm.write(f"Caution! {case_id} auc map not found.")
         if not rpf_map_path:
-            tqdm.write(f"Caution! {case_id} rpf map not found.")  
+            tqdm.write(f"Caution! {case_id} rpf map not found.")
         if not avd_map_path:
-            tqdm.write(f"Caution! {case_id} avd map not found.")  
+            tqdm.write(f"Caution! {case_id} avd map not found.")
         if not mtt_map_path:
-            tqdm.write(f"Caution! {case_id} mtt map not found.")  
+            tqdm.write(f"Caution! {case_id} mtt map not found.")
 
-
-        #Create Data Table 
-        images_and_masks.append({
-            'case_id': case_id,
-            'mask_path': mask_path,
-            'mdr_path': mdr_moco_path,
-            'auc_map_path': auc_map_path,
-            'rpf_map_path': rpf_map_path,
-            'avd_map_path': avd_map_path,
-            'mtt_map_path': mtt_map_path,
-        })
+        # Create Data Table
+        images_and_masks.append(
+            {
+                "case_id": case_id,
+                "mask_path": mask_path,
+                "mdr_path": mdr_moco_path,
+                "auc_map_path": auc_map_path,
+                "rpf_map_path": rpf_map_path,
+                "avd_map_path": avd_map_path,
+                "mtt_map_path": mtt_map_path,
+            }
+        )
 
     # Save the results to file
-    #output_path = os.path.join(table_dir, f'{site}_images_masks_table.pkl')
-    output_path = os.path.join(table_dir, f"{site}_images_masks_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
-    with open(output_path, 'wb') as f:
+    if batch_no is not None:
+        output_path = os.path.join(table_dir, f"{site}_images_masks_table_{batch_no}.pkl")
+    else:
+        output_path = os.path.join(table_dir, f"{site}_images_masks_table.pkl")
+
+    with open(output_path, "wb") as f:
         pickle.dump(images_and_masks, f)
-    
+
     return images_and_masks
 
 #Helper: For writing the few missing cases using lk/rk aligned map affine        
-def quick_write_series(missing_series, map_dict, db_series, site, case_id):         
+def quick_write_series(missing_series, map_dict, db_series, site, case_id, batch_no=None):         
     
     tqdm.write(f'Processing case {case_id}...')
     
@@ -119,7 +140,8 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
     mdr_path = map_dict['mdr']
 
     #dir paths
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients", 
+                            f"Batch_{batch_no}" if batch_no else "")
 
     pat_series = []
     bari_add_series_name(case_id, pat_series)
@@ -155,6 +177,8 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
 
  
     # 1. Handle missing series
+    affine_rk = None
+    affine_lk = None
     for s in missing_series:
         new_series_name = s[3][0]
         side = "rk" if "_rk" in new_series_name else "lk"
@@ -233,14 +257,19 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
         tqdm.write(f"Building {new_series_name} series using {map_name} and {side.upper()} affine.")
 
         # 4. Load the map (placeholder for your actual map loading)
+        map_vols = None
         try:
-            if 'mdr'.lower() in map:
-                if site == 'Sheffield':
-                    map_vols = db.volumes_2d(map, 'TriggerTime')
-                else:
-                    map_vols = db.volumes_2d(map, 'AcquisitionTime')
+            # Extract string to check for 'mdr'
+            check_str = ""
+            if isinstance(map, list):
+                check_str = next((str(x) for x in (map[3] if len(map) > 3 else map) if isinstance(x, str)), "")
+            elif isinstance(map, str):
+                check_str = map
+
+            if 'mdr' in check_str.lower():
+                map_vols = db.volumes_2d(map, 'TriggerTime' if site == 'Sheffield' else 'AcquisitionTime')
             else:
-                map_vols = db.volumes_2d(map[0])
+                map_vols = db.volumes_2d(map[0] if site == 'Sheffield' else map)
         except Exception as e:
             logging.error(f'Cannot load map volume - {e}')
             
@@ -248,20 +277,24 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id):
         
         if map_vols is not None:
             try:
-                for aff, s in zip(affine, map_vols):
-                    if 'mdr'.lower() in map:
-                        if site == 'Sheffield':
-                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
-                        else:    
-                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
-                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+                # Determine the path string
+                if isinstance(map, list):
+                    if len(map) > 3 and isinstance(map[3], (list, tuple)):
+                        path_str = map[3][0]  # e.g., 'DCE_7_mdr_moco'
                     else:
-                        new_slice_vol = vreg.volume(s.values, aff) 
-                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+                        path_str = map[0]      # fallback to first element
+                else:
+                    path_str = map            # map is already a string
+
+                # Now safely check for 'mdr'
+                if 'mdr' in path_str:
+                    time_key = 'TriggerTime' if site == 'Sheffield' else 'AcquisitionTime'
+                    map_vols = db.volumes_2d(map[0], time_key) if isinstance(map, list) else db.volumes_2d(map, time_key)
+                else:
+                    map_vols = db.volumes_2d(map[0]) if isinstance(map, list) else db.volumes_2d(map)
             except Exception as e:
-                logging.error(f'cannot build {new_series_name}: {e}')
-        else:
-            logging.error(f'no map path found:{e}')
+                logging.error(f'Cannot load map volume - {e}')
+
 
     tqdm.write(f'All aligned volumes saved in {case_id} folder')
 
@@ -308,40 +341,50 @@ def _coreg(volume, bk, lk, rk):
 
 #Main Protocol: Aligning 2D maps and moco dynamic to Dixon masks
 def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
-    
-    #define paths
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
-    png_save = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients", 'Coregistration Displays')
+    # define paths
+    parts = [os.getcwd(), "build", "dce_9_coreg_dce2dixon", site, "Patients"]
+    if batch_no is not None:
+        parts.append(f"Batch_{batch_no}")
+    dest_dir = os.path.join(*parts)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    png_save = os.path.join(os.getcwd(), "build", "dce_9_coreg_dce2dixon", site, "Patients", "Coregistration Displays")
     os.makedirs(png_save, exist_ok=True)
 
     # Logging setup
     logging.basicConfig(
-    filename=os.path.join(dest_dir, 'error.log'),
-    filemode='w',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+        filename=os.path.join(dest_dir, "error.log"),
+        filemode="w",
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
     )
 
     if table_dir is None:
-        # Build default path
-        table_dir = os.path.join(os.getcwd(),'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+        parts = [os.getcwd(), "build", "dce_9_coreg_dce2dixon", site, "Patients"]
+        if batch_no is not None:
+            parts.append(f"Batch_{batch_no}")
+        table_dir = os.path.join(*parts)
         os.makedirs(table_dir, exist_ok=True)
-        table_path = os.path.join(table_dir, f"{site}_images_masks_table{f'_{batch_no}' if batch_no is not None else ''}.pkl")
+
+        if batch_no is not None:
+            table_path = os.path.join(table_dir, f"{site}_images_masks_table_{batch_no}.pkl")
+        else:
+            table_path = os.path.join(table_dir, f"{site}_images_masks_table.pkl")
+
         if os.path.isfile(table_path):
-            tqdm.write('Using existing dictionary...')
-            # Case 1a: Default file exists → load it
+            tqdm.write("Using existing dictionary...")
             with open(table_path, "rb") as f:
                 images_and_mask_table = pickle.load(f)
         else:
-            # Case 1b: No default file → resort to _get_data
-            tqdm.write('Creating new dce img + mask inventory...')
-            images_and_mask_table = _get_data(site, table_dir)
+            tqdm.write("Creating new dce img + mask inventory...")
+            images_and_mask_table = _get_data(site, table_dir=table_dir, batch_no=batch_no)
 
     batch_table = images_and_mask_table[start_case:end_case]
 
-    first_case_id = batch_table[0]['case_id']
-    last_case_id = batch_table[-1]['case_id']
-    tqdm.write(f"Processing {len(batch_table)} cases from {first_case_id} to {last_case_id}")
+    case_ids = [row["case_id"] for row in batch_table]
+    tqdm.write(f"Processing {len(case_ids)} cases:")
+    for cid in case_ids:
+        tqdm.write(f"  - {cid}")
 
     pat_series = []
     for entry in tqdm(batch_table, desc=f'Aligning {site} DCE to Dixon', unit='case'):
@@ -386,7 +429,9 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
             mdr_clean_rk, mdr_clean_lk
         ]
 
-        if all(x in db.series(database) for x in series):
+        db_series = db.series(database)
+
+        if all(x in db_series for x in series):
             tqdm.write(f'Skipping case {case_id}. All coregistered series in {site} folder')
             continue  
           
@@ -394,8 +439,8 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
         ###Easy build for a few missing series in file by applying affine from another aligned map.
         ####This prevents from having to run through co-registration again for the finite missing series.
 
+
         # 1: find the few missing series
-        db_series = db.series(database)
         missing_series = [s for s in series if s not in db_series]
 
         if not missing_series:
@@ -415,7 +460,7 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
             for s in missing_series:
                 tqdm.write(f"  - {s[3][0]}")
             tqdm.write('Sending missing series to quick write dicom function')
-            quick_write_series(missing_series, map_dict, db_series, site, case_id)
+            quick_write_series(missing_series, map_dict, db_series, site, case_id, batch_no=batch_no)
             continue
         
         #_________________COREGISTRATION PIPELINE BEGINS HERE_____________________#
@@ -606,5 +651,5 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
 
 if __name__ == '__main__':
     #_get_data('Bordeaux')
-    _align_2d('Sheffield')
+    _align_2d('Sheffield', batch_no=3)
 
