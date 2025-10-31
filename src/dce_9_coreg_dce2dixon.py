@@ -272,29 +272,27 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id, batch
                 map_vols = db.volumes_2d(map[0] if site == 'Sheffield' else map)
         except Exception as e:
             logging.error(f'Cannot load map volume - {e}')
-            
-    
-        
+
+
         if map_vols is not None:
             try:
-                # Determine the path string
-                if isinstance(map, list):
-                    if len(map) > 3 and isinstance(map[3], (list, tuple)):
-                        path_str = map[3][0]  # e.g., 'DCE_7_mdr_moco'
+                for aff, s in zip(affine, map_vols):
+                    if site == 'Sheffield':
+                        try:
+                            if 'mdr'.lower() in map[3][0]:
+                                new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
+                                db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+                        except:
+                                new_slice_vol = vreg.volume(s.values, aff) 
+                                db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
+                    elif 'mdr'.lower() in map:    
+                            new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
+                            db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
                     else:
-                        path_str = map[0]      # fallback to first element
-                else:
-                    path_str = map            # map is already a string
-
-                # Now safely check for 'mdr'
-                if 'mdr' in path_str:
-                    time_key = 'TriggerTime' if site == 'Sheffield' else 'AcquisitionTime'
-                    map_vols = db.volumes_2d(map[0], time_key) if isinstance(map, list) else db.volumes_2d(map, time_key)
-                else:
-                    map_vols = db.volumes_2d(map[0]) if isinstance(map, list) else db.volumes_2d(map)
+                        new_slice_vol = vreg.volume(s.values, aff) 
+                        db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
             except Exception as e:
-                logging.error(f'Cannot load map volume - {e}')
-
+                logging.error(f'cannot build {new_series_name}: {e}')
 
     tqdm.write(f'All aligned volumes saved in {case_id} folder')
 
@@ -392,7 +390,6 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
         case_id = entry['case_id']
         tqdm.write(f'Processing case {case_id}...')
 
-
         mask_path = entry['mask_path']
         mdr_path = entry['mdr_path']        
         auc_path = entry['auc_map_path']
@@ -484,7 +481,11 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
             lk = lk.bounding_box()
 
             # Load AUC for coregistration
-            auc_slice_vols = db.volumes_2d(auc_path[0])
+            if auc_path == []:
+                tqdm.write(f'Skipping case {case_id}: no auc path found')
+                continue
+            else:
+                auc_slice_vols = db.volumes_2d(auc_path[0])
 
 
             #_________________COREGISTRATION_________________________#
