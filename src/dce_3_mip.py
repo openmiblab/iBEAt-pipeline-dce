@@ -37,7 +37,11 @@ def mip(site):
     )
 
     database = db.series(sitedatapath)
-    DCE_axial_aorta = [entry for entry in database if entry[3][0].strip().lower() == 'dce_1_aorta'.lower()]
+    if site == 'Sheffield':
+        DCE_axial_aorta = [entry for entry in database if entry[3][0].strip().lower() == 'dce_1_kidneys'.lower()]
+    else:
+        DCE_axial_aorta = [entry for entry in database if entry[3][0].strip().lower() == 'dce_1_aorta'.lower()]
+    
     pat_series = []
     for study in tqdm(DCE_axial_aorta, desc='Proceesing MIP', unit='case'):
         try:
@@ -51,7 +55,10 @@ def mip(site):
                 continue
 
             #build mip volume
-            array_4d = db.volume(study, dims=['AcquisitionTime'])
+            if site == 'Sheffield':
+                array_4d = db.volume(study, dims=['TriggerTime'])
+            else:
+                array_4d = db.volume(study, dims=['AcquisitionTime'])
             mip_series = max_enh(array_4d.values)
             db.write_volume((mip_series, array_4d.affine), mip_clean, ref=study)
         except Exception as e:
@@ -59,7 +66,7 @@ def mip(site):
 
 # Call Task Site 
 if __name__ == '__main__':
-    mip('Bordeaux')
+    mip('Sheffield')
 
 
 

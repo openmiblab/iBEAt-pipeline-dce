@@ -23,8 +23,7 @@ def Mapping(site):
     aif_path = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', site, "Patients")
 
     #save dir
-    dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_8_mapping')
-    destpath =  os.path.join(dstdatapath, site, "Patients")
+    destpath = os.path.join(os.getcwd(), 'build', 'dce_8_mapping', site, 'Patients')
     os.makedirs(destpath, exist_ok=True)
 
     # Logging setup
@@ -53,7 +52,7 @@ def Mapping(site):
             continue
 
 
-        if aif_file:
+        if aif_file is not None:
             try:
 
                 
@@ -78,13 +77,16 @@ def Mapping(site):
                 ft_clean = baseline_path + [(series_name + 'FT_map', 0)]
                 tt_clean = baseline_path + [(series_name + 'TT_map', 0)]
 
-                #check + skip if all files are processed
-                series = [max_clean, auc_clean, att_clean, fit_clean, rpf_clean, avd_clean, mtt_clean, 
-                          fp_clean, tp_clean, vp_clean, ft_clean, tt_clean]
-                
+
+
+                series = [max_clean, auc_clean, att_clean, fit_clean, 
+                          rpf_clean, avd_clean, mtt_clean, fp_clean, 
+                          tp_clean, vp_clean, ft_clean, tt_clean] 
+                      
                 if all(x in db.series(baseline_path) for x in series):
-                    tqdm.write(f'Skipping case {case_id}. All maps exist in {site} folder')
+                    print(f'Skipping case {case_id}. All MDREG DICOMs already in {site} folder')
                     continue
+                
 
                 #load moco_dicom 
                 if site in ('Bari', 'Bordeaux'):              

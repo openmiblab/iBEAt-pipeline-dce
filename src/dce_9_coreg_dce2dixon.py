@@ -179,7 +179,7 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id, batch
     # 1. Handle missing series
     affine_rk = None
     affine_lk = None
-    for s in missing_series:
+    for s in tqdm(missing_series, desc='Building Missing Series', unit='case'):
         new_series_name = s[3][0]
         side = "rk" if "_rk" in new_series_name else "lk"
 
@@ -574,7 +574,7 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
                             new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
                         else:
                             new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
-                        db.write_volume(new_slice_vol, mdr_clean_rk, ref=mdr_path, append=True)
+                        db.write_volume(new_slice_vol, mdr_clean_rk, ref=mdr_path[0], append=True)
                 except Exception as e:
                     logging.error(f'cannot build MDR RK for {case_id}: {e}')
 
@@ -585,7 +585,7 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
                             new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['TriggerTime'])
                         else:    
                             new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
-                        db.write_volume(new_slice_vol, mdr_clean_lk, ref=mdr_path, append=True)
+                        db.write_volume(new_slice_vol, mdr_clean_lk, ref=mdr_path[0], append=True)
                 except Exception as e:
                     logging.error(f'cannot build MDR LK for {case_id}: {e}')        
 

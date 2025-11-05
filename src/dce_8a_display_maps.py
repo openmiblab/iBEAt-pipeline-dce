@@ -10,11 +10,15 @@ import vreg.plot as vplot
  
 
 # Main: Load and Display maps 
-def map_display(site, map_type):
+def map_display(site, map_type, batch_no=None):
     
     #data directories
     datapath = os.path.join(os.getcwd(), 'build', 'dce_8_mapping')
-    base_dir =  os.path.join(datapath, site, "Patients")
+    base =  [os.getcwd(), datapath, site, "Patients"]
+    if batch_no is not None:
+        base.append(f"Batch_{batch_no}")
+    base_dir = os.path.join(*base)
+    os.makedirs(base_dir, exist_ok=True)
     
     
     #load database 
@@ -52,7 +56,7 @@ def map_display(site, map_type):
         for map in rpf_map_database:
             case_id = map[1]
             rpf_vol = db.volume(map)
-            vplot.overlay_2d_new(rpf_vol, vmin=1, vmax=200, save_path=save_dir + f'/{case_id}.png', show=False)
+            vplot.overlay_2d_new(rpf_vol, vmin=0, vmax=400, save_path=save_dir + f'/{case_id}.png', show=False)
 
 
     elif map_type == 'AVD':
@@ -66,12 +70,14 @@ def map_display(site, map_type):
         for map in mtt_map_database:
             case_id = map[1]
             mtt_vol = db.volume(map)
-            vplot.overlay_2d_new(mtt_vol, vmin=1, vmax=200, save_path=save_dir + f'/{case_id}.png', show=False)
+            vplot.overlay_2d_new(mtt_vol, vmin=0, vmax=400, save_path=save_dir + f'/{case_id}.png', show=False)
 
 
 # Call Task 
 if __name__ == '__main__':
-    for map_type in ['RPF', 'MTT']:
-        map_display('Sheffield', map_type=map_type)
+    batch_no = list(range(1, 10))
+    for no in batch_no:
+        for map_type in ['RPF', 'MTT']:
+            map_display('Sheffield', map_type=map_type, batch_no=no)
 
 

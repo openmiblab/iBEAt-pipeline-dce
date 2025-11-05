@@ -77,7 +77,7 @@ def aorta2csv(site):
                 aif_int = np.nanmean(aif_means, axis=1)
                 aif_results[case_id] = aif_int
                 continue  
-            elif site == 'Bari' or 'Boredeaux' or 'Leeds':           
+            elif site in ('Bari', 'Boredeaux', 'Leeds'):           
                 if img.ndim == 3:
                     aif_curve = []
                     for t in range(img.shape[0]):

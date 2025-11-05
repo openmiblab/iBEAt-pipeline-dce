@@ -14,6 +14,8 @@ from tqdm import tqdm
 from collections.abc import Iterable
 import pydmr
 import pickle
+import matplotlib.pyplot as plt
+import matplotlib
 
 #Helper: Add series name
 def bari_add_series_name(folder, all_series: list):
@@ -91,8 +93,125 @@ def fill_slice_gaps(series, ref, mask=None):
 
     return output_array
 
+def get_distinct_colors(rois, colormap='jet'):
+    
+    if len(rois)==1:
+        colors = [[255, 0, 0, 0.6]]
+    elif len(rois)==2:
+        colors = [[255, 0, 0, 0.6], [0, 255, 0, 0.6]]
+    elif len(rois)==3:
+        colors = [[255, 0, 0, 0.6], [0, 255, 0, 0.6], [0, 0, 255, 0.6]]
+    else:
+        n = len(rois)
+        #cmap = cm.get_cmap(colormap, n)
+        cmap = matplotlib.colormaps[colormap]
+        colors = [cmap(i)[:3] + (0.6,) for i in np.linspace(0, 1, n)]  # Set alpha to 0.6 for transparency
+
+    return colors
+
+
+def mosaic_overlay(img, rois, file, colormap='tab20', aspect_ratio=16/9, margin=[15,5,2], show=False):
+
+    # Define RGBA colors (R, G, B, Alpha) — alpha controls transparency
+    colors = get_distinct_colors(rois, colormap=colormap)
+
+    # Get all masks as boolean arrays
+    masks = [m.astype(bool) for m in rois]
+
+    # Build a single combined mask
+    all_masks = masks[0]
+    for i in range(1, len(masks)):
+        all_masks = np.logical_or(all_masks, masks[i])
+    if np.sum(all_masks)==0:
+        raise ValueError('Empty masks')
+    
+    # Find corners of cropped mask
+    for x0 in range(all_masks.shape[0]):
+        if np.sum(all_masks[x0,:,:]) > 0:
+            break
+    for x1 in range(all_masks.shape[0]-1, -1, -1):
+        if np.sum(all_masks[x1,:,:]) > 0:
+            break
+    for y0 in range(all_masks.shape[1]):
+        if np.sum(all_masks[:,y0,:]) > 0:
+            break
+    for y1 in range(all_masks.shape[1]-1, -1, -1):
+        if np.sum(all_masks[:,y1,:]) > 0:
+            break
+    for z0 in range(all_masks.shape[2]):
+        if np.sum(all_masks[:,:,z0]) > 0:
+            break
+    for z1 in range(all_masks.shape[2]-1, -1, -1):
+        if np.sum(all_masks[:,:,z1]) > 0:
+            break
+
+    # Add in the margins       
+    x0 = x0-margin[0] if x0-margin[0]>=0 else 0
+    y0 = y0-margin[1] if y0-margin[1]>=0 else 0
+    z0 = z0-margin[2] if z0-margin[2]>=0 else 0
+    x1 = x1+margin[0] if x1+margin[0]<all_masks.shape[0] else all_masks.shape[0]-1
+    y1 = y1+margin[1] if y1+margin[1]<all_masks.shape[1] else all_masks.shape[1]-1
+    z1 = z1+margin[2] if z1+margin[2]<all_masks.shape[2] else all_masks.shape[2]-1
+
+    # Determine number of rows and columns
+    # c*r = n -> c=n/r
+    # c*w / r*h = a -> w*n/r = a*r*h -> (w*n) / (a*h) = r**2
+    width = x1-x0+1
+    height = y1-y0+1
+    n_mosaics = z1-z0+1
+    nrows = int(np.round(np.sqrt((width*n_mosaics)/(aspect_ratio*height))))
+    ncols = int(np.ceil(n_mosaics/nrows))
+
+    # Set up figure 
+    fig, ax = plt.subplots(
+        nrows=nrows, 
+        ncols=ncols, 
+        gridspec_kw = {'wspace':0, 'hspace':0}, 
+        figsize=(ncols*width/max([width,height]), nrows*height/max([width,height])),
+        dpi=300,
+    )
+    plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    # Build figure
+    i = 0
+    for row in tqdm(ax, desc='Building png'):
+        for col in row:
+
+            col.set_xticklabels([])
+            col.set_yticklabels([])
+            col.set_aspect('equal')
+            col.axis("off")
+
+            # Display the background image
+            if z0+i < img.shape[2]:
+                col.imshow(
+                    img[x0:x1+1, y0:y1+1, z0+i].T, 
+                    cmap='gray', 
+                    interpolation='none', 
+                    vmin=0, 
+                    vmax=np.mean(img) + 2 * np.std(img),
+                )
+
+            # Overlay each mask
+            if z0+i <= z1:
+                for mask, color in zip(masks, colors):
+                    rgba = np.zeros((x1+1-x0, y1+1-y0, 4), dtype=float)
+                    for c in range(4):  # RGBA
+                        rgba[..., c] = mask[x0:x1+1, y0:y1+1, z0+i] * color[c]
+                    col.imshow(rgba.transpose((1,0,2)), interpolation='none')
+
+            i += 1
+
+    # fig.suptitle('Mask overlay', fontsize=14)
+    fig.savefig(file, bbox_inches='tight', pad_inches=0)
+    plt.savefig(file)
+    if show == True:
+        plt.show()
+    plt.close()
+
+
 #Helper: K-means for CM segmentation
-def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, normalize=True, return_features=False, site=None, study=None):
+def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, normalize=True, return_features=False, site=None, case_id=None, batch_no=None):
     """
     Labels structures in an image
     
@@ -108,12 +227,18 @@ def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, n
     clusters : list of dbdicom series, with labels per cluster.
     """
     pat_series = []
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-    database = [dest_dir, study, ('Baseline', 0)]
-    mask_database = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
-    series_name = bari_add_series_name(study, pat_series)
+    dest_dir_base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+    if batch_no is not None:
+        dest_dir_base.append(f"Batch_{batch_no}")
+    dest_dir = os.path.join(*dest_dir_base)
+    database = [dest_dir, case_id, ('Baseline', 0)]
+    masks_base = [os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients"]
+    if batch_no is not None:
+        masks_base.append(f"Batch_{batch_no}")
+    masks_database = os.path.join(*masks_base)
+    series_name = bari_add_series_name(case_id, pat_series)
 
-    study_desc = [s for s in db.series(mask_database) if s[1] == study]
+    study_desc = [s for s in db.series(masks_database) if s[1] == case_id]
 
 
     # If a mask is provided, map it onto the reference feature and 
@@ -201,11 +326,21 @@ def kmeans(features, mask=None, roi=None, n_clusters=2, multiple_series=False, n
 
 #______________________________________________MAIN PROTOCOL__________________________________#
 #Step 1: Get data and create a table
-def get_data(site):
-    base_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+def get_data(site, batch_no=None):
+    base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+    if batch_no is not None:
+        base.append(f"Batch_{batch_no}")
+    base_dir = os.path.join(*base)
     os.makedirs(base_dir, exist_ok=True)
-    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
-    dce_maps_dir = os.path.join(os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients")
+    masks_base = [os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients"]
+    if batch_no is not None:
+        masks_base.append(f"Batch_{batch_no}")
+    masks_dir = os.path.join(*masks_base)
+    dce_maps_base = [os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients"]
+    if batch_no is not None:
+        dce_maps_base.append(f"Batch_{batch_no}")
+    dce_maps_dir = os.path.join(*dce_maps_base)
+
 
     # Load series from databases
     masks_database = db.series(masks_dir)
@@ -230,10 +365,10 @@ def get_data(site):
 
 
     # Get unique case identifiers
-    case_id = set(entry[1] for entry in rk_maps2fill_database)
+    case_ids = set(entry[1] for entry in rk_maps2fill_database)
 
     images_and_masks = []
-    for case_id in sorted(case_id):
+    for case_id in sorted(case_ids):
         # Find corresponding mask study
         mask_path = next((s for s in masks_database if s[1] == case_id), None)
         if mask_path is None:
@@ -270,15 +405,18 @@ def get_data(site):
 
 
 #Main Protocol: Filling Gaps + Build Cortex/Medulla masks
-def fillgaps(site):
+def fillgaps(site, batch_no=None):
     
-    images_and_masks = get_data(site)
+    images_and_masks = get_data(site, batch_no=batch_no)
     pat_series = []
-    for entry in images_and_masks:
-        study = entry['case']
-        dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-        database = [dest_dir, study, ('Baseline', 0)]
-        series_name = bari_add_series_name(study, pat_series)
+    for entry in tqdm(images_and_masks, desc='Filling Gaps + Building Masks', unit='case'):
+        case_id = entry['case']
+        dest_base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+        if batch_no is not None:
+            dest_base.append(f"Batch_{batch_no}")
+        dest_dir = os.path.join(*dest_base)
+        database = [dest_dir, case_id, ('Baseline', 0)]
+        series_name = bari_add_series_name(case_id, pat_series)
 
 
         rk_rpf_clean = database + [(series_name + "rk_rpf_gaps_filled", 0)]
@@ -295,8 +433,8 @@ def fillgaps(site):
         if all(x in db.series(database) for x in clean_series):
             roi = ['lk', 'rk']
             for kidney in roi:
-                cortex_medulla(site, study, roi=kidney)
-            continue
+                cortex_medulla(site, case_id, roi=kidney, batch_no=batch_no)
+                continue
 
         # Dictonary
         mask_path = entry['mask_path']   
@@ -305,14 +443,21 @@ def fillgaps(site):
 
         rk_dce_volumes = []
         for map_path in rk_dce_map_paths:
-            rk_dce_volume = db.volumes_2d(map_path)
-            rk_dce_volumes.append(rk_dce_volume)
+            try:
+                rk_dce_volume = db.volumes_2d(map_path)
+                rk_dce_volumes.append(rk_dce_volume)
+            except Exception as e:
+                print(f'cannot load {map_path[3][0]} for {case_id}: {e}')
+                continue
 
         lk_dce_volumes = []
         for map_path in lk_dce_map_paths:
-            lk_dce_volume = db.volumes_2d(map_path)
-            lk_dce_volumes.append(lk_dce_volume)
-
+            try:
+                lk_dce_volume = db.volumes_2d(map_path)
+                lk_dce_volumes.append(lk_dce_volume)
+            except Exception as e:
+                print(f'cannot load {map_path[3][0]} for {case_id}: {e}')
+                continue
 
         mask = db.volume(mask_path)
         ref_volume = mask
@@ -335,50 +480,80 @@ def fillgaps(site):
         
     
         print('Building RPF Volume...')
-        if rk_rpf_clean not in db.series(database):
-            db.write_volume((rk_outputs[0], mask.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
-
-        if lk_rpf_clean not in db.series(database):
-            db.write_volume((lk_outputs[0], mask.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
-        
+        try:
+            if rk_rpf_clean not in db.series(database):
+                db.write_volume((rk_outputs[0], mask.affine), rk_rpf_clean, ref=rk_dce_map_paths[0])
+        except Exception as e:
+            print(f'cannot build rk_rpf vol for {case_id}: {e}')
+    
+        try:
+            if lk_rpf_clean not in db.series(database):
+                db.write_volume((lk_outputs[0], mask.affine), lk_rpf_clean, ref=lk_dce_map_paths[0])
+        except Exception as e:
+            print(f'cannot build lk_rpf vol for {case_id}: {e}')
+                
         print('Building AVD Volume...')
-        if rk_avd_clean not in db.series(database):
-            db.write_volume((rk_outputs[1], mask.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
+        try:
+            if rk_avd_clean not in db.series(database):
+                db.write_volume((rk_outputs[1], mask.affine), rk_avd_clean, ref=rk_dce_map_paths[1])
+        except Exception as e:
+            print(f'cannot build rk_avd vol for {case_id}: {e}')        
         
-        if lk_avd_clean not in db.series(database):
-            db.write_volume((lk_outputs[1], mask.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
+        try:
+            if lk_avd_clean not in db.series(database):
+                db.write_volume((lk_outputs[1], mask.affine), lk_avd_clean, ref=lk_dce_map_paths[1])        
+        except Exception as e:
+            print(f'cannot build lk_avd vol for {case_id}: {e}')  
 
         print('Building MTT Volume...')
-        if rk_mtt_clean not in db.series(database):
-            db.write_volume((rk_outputs[2], mask.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])        
+        try:
+            if rk_mtt_clean not in db.series(database):
+                db.write_volume((rk_outputs[2], mask.affine), rk_mtt_clean, ref=rk_dce_map_paths[2])    
+        except Exception as e:
+            print(f'cannot build rk_mtt vol for {case_id}: {e}')             
         
-        if lk_mtt_clean not in db.series(database):
-            db.write_volume((lk_outputs[2], mask.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
-        
+        try:
+            if lk_mtt_clean not in db.series(database):
+                db.write_volume((lk_outputs[2], mask.affine), lk_mtt_clean, ref=lk_dce_map_paths[2])  
+        except Exception as e:
+            print(f'cannot build lk_mtt vol for {case_id}: {e}') 
 
         roi = ['lk', 'rk']
         for kidney in roi:
-            cortex_medulla(site, study, roi=kidney)
+            cortex_medulla(site, case_id, roi=kidney, batch_no=batch_no)
 
 
 #Step 3: Cortex Medulla Mask Creation
-def cortex_medulla(site, study, roi=None): 
+def cortex_medulla(site, case_id, roi=None, batch_no=None): 
 
-    masks_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
+    masks_base = [os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients"]
+    if batch_no is not None:
+        masks_base.append(f"Batch_{batch_no}")
+    masks_dir = os.path.join(*masks_base)
     mask_database = db.series(masks_dir)
-    maps_path = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-    maps_database = db.series(maps_path)
+    maps_path_base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+    if batch_no is not None:
+        maps_path_base.append(f"Batch_{batch_no}")
+    maps_dir = os.path.join(*maps_path_base)
+    maps_database = db.series(maps_dir)
     maps = [entry for entry in maps_database if entry[3][0].strip().lower() in
         (f'dce_10_{roi}_rpf_gaps_filled', f'dce_10_{roi}_avd_gaps_filled',  f'dce_10_{roi}_mtt_gaps_filled')] 
     
     pat_series = []
-    dest_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-    mask_png = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", 'overlays', f'{study}_{roi}.png')
-    database = [dest_dir, study, ('Baseline', 0)]
-    series_name = bari_add_series_name(study, pat_series)
+    dest_base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+    if batch_no is not None:
+        dest_base.append(f"Batch_{batch_no}")
+    dest_dir = os.path.join(*dest_base)
+    os.makedirs(dest_dir, exist_ok=True)    
+    
+    mask_png_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", 'overlays')
+    os.makedirs(mask_png_dir, exist_ok=True)
+    mask_png = mask_png_dir + f'{case_id}_{roi}.png'
+    database = [dest_dir, case_id, ('Baseline', 0)]
+    series_name = bari_add_series_name(case_id, pat_series)
 
 
-    both_kidneys = next((m for m in mask_database if m[1] == study), None)
+    both_kidneys = next((m for m in mask_database if m[1] == case_id), None)
     if both_kidneys:
         both_kidneys = db.volume(both_kidneys)
         both_kidneys_arr = both_kidneys.values 
@@ -396,9 +571,14 @@ def cortex_medulla(site, study, roi=None):
             try:
                 output = []
                 for path in maps:
+                    try:
                         volume = db.volume(path)
                         output.append(volume)
-                clusters, cluster_features = kmeans(output, mask_roi, roi=roi, n_clusters=3, multiple_series=True, return_features=True, site=site, study=study)
+                    except Exception as e:
+                        print(f'cannot load {path[3][0]} for case {case_id}: {e}')
+                        continue
+                
+                clusters, cluster_features = kmeans(output, mask_roi, roi=roi, n_clusters=3, multiple_series=True, return_features=True, site=site, case_id=case_id, batch_no=batch_no)
                 # Background = cluster with smallest AVD
                 background = np.argmin([c[1] for c in cluster_features])
                 # Cortex = cluster with largest RPF 
@@ -433,7 +613,7 @@ def cortex_medulla(site, study, roi=None):
                     cm[clusters[cortex].values > 0] = 3
                     cm[clusters[medulla].values > 0] = 4
                     cm_vol = vreg.volume(cm, aff)
-                    vplot.overlay_2d_cm(output[0], mask=cm_vol, save_path=mask_png, show=False)
+                    mosaic_overlay(output[0], rois=cm_vol, file=mask_png, show=True)
                     db.write_volume(cm_vol, lk_cm_desc)
                 
                 elif roi == 'rk':
@@ -445,10 +625,13 @@ def cortex_medulla(site, study, roi=None):
                     cm[clusters[cortex].values > 0] = 1
                     cm[clusters[medulla].values > 0] = 2
                     cm_vol = vreg.volume(cm, aff)
-                    vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=False)
+                    mosaic_overlay(db.volume(maps[0]), rois=cm_vol, file=mask_png, show=True)
+                    # vplot.overlay_2d_cm(db.volume(maps[0]), mask=cm_vol, save_path=mask_png, show=True)
                     db.write_volume(cm_vol, rk_cm_desc)
             except Exception as e:
-                tqdm.write(f'Cannot create {roi} volume for {study}: {e}')
+                tqdm.write(f'Cannot create {roi} volume for {case_id}: {e}')
+
+
 
 
 
@@ -548,7 +731,7 @@ def extract_mdr_input_function(site, roi=None):
     for times in tqdm(case_id_and_times, unit='case'):
 
         case_id = times[0]
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", )
         csv_dir = data_dir + '/CSV' + f'/{case_id}'
         dmr_dir = data_dir + '/DMR' + f'/{case_id}'
         os.makedirs(csv_dir, exist_ok=True)
@@ -662,7 +845,9 @@ def extract_mdr_input_function(site, roi=None):
 
 if __name__ == '__main__':
     #get_data('Bari')
-    fillgaps('Bordeaux')
+    batch_no = [1,2,3,4,5,6,7,8,9]
+    for no in batch_no:
+        fillgaps('Sheffield', batch_no=no)
     # roi = ['RK', 'LK']
     # for m in roi:
     # #     #     cortex_medulla('Bari', study='1128_003', roi=m)
