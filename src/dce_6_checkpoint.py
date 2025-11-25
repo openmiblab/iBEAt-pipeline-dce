@@ -112,9 +112,9 @@ def checkpoint(site):
     if site == 'Sheffield':
         plot_aif_mosaic(csvpath, destpath)
     else:
-        plot_mip_mosaic(images, destpath)
+        #plot_mip_mosaic(images, destpath)
         plot_aif_mosaic(csvpath, destpath)
 
 # Call Task
 if __name__ == '__main__':
-    checkpoint('Sheffield')
+    checkpoint('Bordeaux')

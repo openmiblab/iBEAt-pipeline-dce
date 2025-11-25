@@ -8,14 +8,14 @@ from tqdm import tqdm
 
 
 # Main Protocol
-def aorta2csv(site):
+def aorta2csv(site, batch_no=None):
 
     #load directories and database
     datapath = os.path.join(os.getcwd(), 'build', 'dce_2_data')
     imgpath = os.path.join(datapath, site, "Patients")
     
     maskpath = os.path.join(os.getcwd(), 'build', 'dce_4_aortaseg')
-    segpath = os.path.join(maskpath, site, "Patients")
+    segpath = os.path.join(maskpath, site, "Patients", f'Batch_{batch_no}')
     
     dstdatapath = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv')
     destpath =  os.path.join(dstdatapath, site, "Patients")
@@ -39,8 +39,12 @@ def aorta2csv(site):
     study_times = []
     
     for study in tqdm(DCE_aorta, desc='Obtaining AIF', unit='case'):
-        case_id = study[1]
-        label = next((m for m in masks if m[1] == case_id), None)
+        if site == 'Bordeaux':
+            case_id = study[1]
+            case_id = "_".join(case_id.split("_")[:2])
+        else:
+            case_id = study[1]
+        label = next((m for m in masks if case_id in m[1]), None)
         if label is not None:
             if site == 'Sheffield':
                 aorta = db.volume(study, dims='TriggerTime')                               
@@ -77,7 +81,7 @@ def aorta2csv(site):
                 aif_int = np.nanmean(aif_means, axis=1)
                 aif_results[case_id] = aif_int
                 continue  
-            elif site in ('Bari', 'Boredeaux', 'Leeds'):           
+            elif site in ('Bari', 'Bordeaux', 'Leeds'):           
                 if img.ndim == 3:
                     aif_curve = []
                     for t in range(img.shape[0]):
@@ -96,7 +100,7 @@ def aorta2csv(site):
 
             aif_results[case_id] = aif_curve
         else:
-            print(f"No mask found for case {case_id}")
+            print(f"No mask found for case {case_id} or mask in different batch.")
 
 
 
@@ -127,29 +131,42 @@ def aorta2csv(site):
         })
     
     # Save CSV
-        outpath = os.path.join(destpath, f"{case_id}_aif.csv")
+        outpath = os.path.join(destpath, f'Batch_{batch_no}', f"{case_id}_aif.csv")
         df.to_csv(outpath, index=False)
         print(f"Saved AIF curve for {case_id} {outpath}")
         df = pd.DataFrame({
         "Time (s)": times,
         "AIF Intensity": aif_curve
         })
-        outpath = os.path.join(destpath, f"{case_id}_aif.csv")
+        outpath = os.path.join(destpath, f'Batch_{batch_no}', f"{case_id}_aif.csv")
         df.to_csv(outpath, index=False)
 
     #Save to DMR File
         roi = 'aorta' 
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients") 
-        dmr_file = os.path.join(data_dir, 'DMR', case_id,  f"{case_id}_aif")
-
+        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+        dmr_dir = os.path.join(data_dir, f'Batch_{batch_no}', 'DMR')
+        # Ensure directory exists
+        os.makedirs(dmr_dir, exist_ok=True)
+        dmr_file = os.path.join(dmr_dir, f"{case_id}_aif")
+        dmr_zip = dmr_file + '.dmr.zip'
+        if os.path.exists(dmr_zip):
+            print(f'AIF DMR for case {case_id} already in folder! Skipping')
+            continue
+        study = 'Baseline'
         dmr = {'data':{}, 'pars':{}, 'rois':{}}
-        dmr['rois'][(case_id, roi, 'time')] = times
-        dmr['rois'][(case_id, roi, 'signal')] = aif_curve
+        dmr['rois'][f'{case_id}_{roi}', study, 'time'] = times
+        dmr['rois'][f'{case_id}_{roi}', study, 'signal']  = aif_curve #[f'{case_id} {roi}', study, 'signal']
         dmr['data']['time'] = ['Acquisition time', 'sec', 'float']
         dmr['data']['signal'] = ['Average signal intensity', 'a.u.', 'float']
         pydmr.write(dmr_file, dmr)
+        print(f'Saved AIF DMR for case {case_id}')
 
 #Call Task
 if __name__ == '__main__':
-    aorta2csv('Sheffield')
+
+
+    site = 'Bordeaux'
+    batch_no = [100]
+    for no in batch_no:
+        aorta2csv('Bordeaux', no)
 

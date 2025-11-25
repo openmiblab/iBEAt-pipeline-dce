@@ -268,8 +268,8 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id, batch
 
             if 'mdr' in check_str.lower():
                 map_vols = db.volumes_2d(map, 'TriggerTime' if site == 'Sheffield' else 'AcquisitionTime')
-            else:
-                map_vols = db.volumes_2d(map[0] if site == 'Sheffield' else map)
+            elif ('auc', 'avd', 'mtt') in check_str.lower():
+                map_vols = db.volumes_2d(map[0])
         except Exception as e:
             logging.error(f'Cannot load map volume - {e}')
 
@@ -285,7 +285,7 @@ def quick_write_series(missing_series, map_dict, db_series, site, case_id, batch
                         except:
                                 new_slice_vol = vreg.volume(s.values, aff) 
                                 db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
-                    elif 'mdr'.lower() in map:    
+                    elif 'mdr'.lower() in map[3][0]:    
                             new_slice_vol = vreg.volume(s.values, aff, s.coords, dims=['AcquisitionTime'])
                             db.write_volume(new_slice_vol, series_name, ref=ref_series, append=True)
                     else:
@@ -311,16 +311,16 @@ def _coreg(volume, bk, lk, rk):
     optimizer = {'method': 'brute'}
 
     # Translate to both kidneys
-    optimizer['grid'] = [[-20, 20, 20],
-                         [-20, 20, 20],
-                         [-5, 5, 5]]
+    optimizer['grid'] = [[-20, 20, 20], # x -25, 25, 25 ?
+                         [-20, 20, 20], # y -25, 25, 25 ?
+                         [-5, 5, 5]] #z 
 
     tqdm.write('Coregistering BK...')
     tbk =volume.find_translate_to(bk, optimizer=optimizer, **options) 
     volume = volume.translate(tbk, **options)
 
     # Per kidney fine tuning
-    optimizer['grid'] = 3*[[-2, 2, 10]]
+    optimizer['grid'] = 3*[[-2, 2, 10]] 
 
     tqdm.write('Coregistering LK...')
     tlk = volume.find_translate_to(lk, optimizer=optimizer, **options)
@@ -652,5 +652,5 @@ def _align_2d(site, table_dir=None, batch_no=None, start_case=0, end_case=None):
 
 if __name__ == '__main__':
     #_get_data('Bordeaux')
-    _align_2d('Sheffield', batch_no=3)
+    _align_2d('Bordeaux', batch_no=1)
 

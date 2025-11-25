@@ -16,6 +16,7 @@ import pydmr
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib
+import logging
 
 #Helper: Add series name
 def bari_add_series_name(folder, all_series: list):
@@ -354,7 +355,7 @@ def get_data(site, batch_no=None):
     rk_maps2fill_database = [
         entry for entry in dce_database 
         if entry[3][0].strip().lower() in
-        ('dce_9_rpf_rk_aligned', 'dce_9_avd_rk_aligned', 'dce_9_mtt_rk_aligned' ) 
+        ('dce_9_rpf_rk_aligned', 'dce_9_avd_rk_aligned', 'dce_9_mtt_rk_aligned') 
     ]
 
     lk_maps2fill_database = [
@@ -364,8 +365,23 @@ def get_data(site, batch_no=None):
     ]
 
 
+    rk_mdr_database = [
+    entry for entry in dce_database 
+    if entry[3][0].strip().lower() in
+    ('dce_9_mdr_rk_aligned') 
+    ]
+
+    lk_mdr_database = [
+    entry for entry in dce_database 
+    if entry[3][0].strip().lower() in
+        ('dce_9_mdr_lk_aligned') 
+    ]
+
+
     # Get unique case identifiers
     case_ids = set(entry[1] for entry in rk_maps2fill_database)
+
+
 
     images_and_masks = []
     for case_id in sorted(case_ids):
@@ -383,6 +399,13 @@ def get_data(site, batch_no=None):
         if lk_dce_paths is None:
             print(f"Skipping case {case_id}, DCE moco series not found.") 
 
+        rk_mdr_path = [s for s in rk_mdr_database if s[1] == case_id]
+        if rk_dce_paths is None:
+            print(f"Skipping case {case_id}, DCE moco series not found.") 
+        
+        lk_mdr_path = [s for s in lk_mdr_database if s[1] == case_id]
+        if lk_dce_paths is None:
+            print(f"Skipping case {case_id}, DCE moco series not found.")
 
 
         #create data table 
@@ -390,7 +413,9 @@ def get_data(site, batch_no=None):
             'case': case_id,
             'mask_path': mask_path,            
             'rk_dce_maps': rk_dce_paths,          
-            'lk_dce_maps': lk_dce_paths
+            'lk_dce_maps': lk_dce_paths,
+            'rk_mdr_path': rk_mdr_path,
+            'lk_mdr_path': lk_mdr_path
 
         })
 
@@ -404,12 +429,12 @@ def get_data(site, batch_no=None):
     return images_and_masks
 
 
-#Main Protocol: Filling Gaps + Build Cortex/Medulla masks
-def fillgaps(site, batch_no=None):
-    
+#Step 2: Fill DCE Gaps
+
+def fill_dce_maps(site, batch_no=None):
     images_and_masks = get_data(site, batch_no=batch_no)
     pat_series = []
-    for entry in tqdm(images_and_masks, desc='Filling Gaps + Building Masks', unit='case'):
+    for entry in tqdm(images_and_masks, desc='Filling DCE Maps + Building C/M masks', unit='case'):
         case_id = entry['case']
         dest_base = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
         if batch_no is not None:
@@ -425,10 +450,10 @@ def fillgaps(site, batch_no=None):
         lk_avd_clean = database + [(series_name + "lk_avd_gaps_filled", 0)]
         rk_mtt_clean = database + [(series_name + "rk_mtt_gaps_filled", 0)]
         lk_mtt_clean = database + [(series_name + "lk_mtt_gaps_filled", 0)]
-        
+
         clean_series = [rk_rpf_clean, lk_rpf_clean,
                         rk_avd_clean, lk_avd_clean,
-                        rk_mtt_clean, lk_mtt_clean ]
+                        rk_mtt_clean, lk_mtt_clean]
                 
         if all(x in db.series(database) for x in clean_series):
             roi = ['lk', 'rk']
@@ -441,6 +466,14 @@ def fillgaps(site, batch_no=None):
         rk_dce_map_paths = entry['rk_dce_maps']
         lk_dce_map_paths = entry['lk_dce_maps']
 
+        clean_maps = [  rk_rpf_clean, lk_rpf_clean,
+                        rk_avd_clean, lk_avd_clean,
+                        rk_mtt_clean, lk_mtt_clean]
+                
+        if all(x in db.series(database) for x in clean_maps):
+            continue
+
+                
         rk_dce_volumes = []
         for map_path in rk_dce_map_paths:
             try:
@@ -457,8 +490,8 @@ def fillgaps(site, batch_no=None):
                 lk_dce_volumes.append(lk_dce_volume)
             except Exception as e:
                 print(f'cannot load {map_path[3][0]} for {case_id}: {e}')
-                continue
-
+                
+        
         mask = db.volume(mask_path)
         ref_volume = mask
         
@@ -521,6 +554,7 @@ def fillgaps(site, batch_no=None):
         roi = ['lk', 'rk']
         for kidney in roi:
             cortex_medulla(site, case_id, roi=kidney, batch_no=batch_no)
+
 
 
 #Step 3: Cortex Medulla Mask Creation
@@ -636,66 +670,98 @@ def cortex_medulla(site, case_id, roi=None, batch_no=None):
 
 
 #Step 4: Extract cortex and medulla input function and write to dmr
-def extract_mdr_input_function(site, roi=None):
+def extract_mdr_input_function(site, roi=None, batch_no=None):
+    
+    # Aligned MDR
+    img_database = [os.getcwd(), 'build', 'dce_9_coreg_dce2dixon', site, "Patients"]
+    if batch_no is not None:
+        img_database.append(f"Batch_{batch_no}")
+    img_dir = os.path.join(*img_database)
 
+    # Whole Kidneys
+    mask_database = [os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients"]
+    if batch_no is not None:
+        mask_database.append(f"Batch_{batch_no}")
+    mask_dir = os.path.join(*mask_database)
+    
+    # Cortex + Medulla 
+    # data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
+    # database = db.series(data_dir)
 
+    dest_database = [os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients"]
+    if batch_no is not None:
+        dest_database.append(f"Batch_{batch_no}")
+    dest_dir = os.path.join(*dest_database)
+
+    # Logging setup
+    logging.basicConfig(
+    filename=os.path.join(dest_dir, 'error.log'),
+    filemode='w',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
+    #______FUNCTIONS______#
     def extract_times(roi=None):
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-        database = db.series(data_dir)
-        mdr_aligned = [entry for entry in database if entry[3][0].strip().lower() == f'dce_9_mdr_{roi}_aligned'.lower()]
+        database = db.series(img_dir)       
+        mdr_aligned = [entry for entry in database if entry[3][0].strip().lower() == f'DCE_9_mdr_{roi}_aligned'.lower()]
         time_list = []
         for series in mdr_aligned:
             case_id = series[1]
-            vols = db.volumes_2d(series, dims=['AcquisitionTime'])
-            for vol in vols:
-                time = vol.coords
-                time = [t for sublist in time for t in sublist]
-                time = time - time[0]
-                time_list.append((case_id, time))
-                break
-        return time_list
-    
-    def cortex_on_mdr(cortex_vol=None, roi=None):
+            if site in ('Sheffield', 'Bordeaux'):
+                try:
+                    vols = db.volumes_2d(series, dims=['AcquisitionTime'])
+                    for vol in vols:
+                        time = vol.coords
+                        time = [t for sublist in time for t in sublist]
+                        time = time - time[0]
+                        time_list.append((case_id, vols, time))
+                        break     
+                except Exception as e:
+                    logging.error(f'''Cannot load {roi} mdr volume for case {case_id}: {e}. Skipping''' )        
+                    continue
+        return time_list 
 
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-        database = db.series(data_dir)
-        study = cortex_vol[0]
-        mdr_aligned = [entry for entry in database if entry[3][0].strip().lower() == f'dce_9_mdr_{roi}_aligned'.lower()]
-        for series in mdr_aligned:
-            vols = db.volumes_2d(series, dims=['AcquisitionTime'])
-            cortex_on_time_vols = []
-            for vol in vols:
-                vol_t = vreg.volume(vol.values[:,:,0,:], vol.affine) 
-                cortex_on_time_vol = cortex_vol[1].slice_like(vol_t)
-                cortex_on_time_vols.append(cortex_on_time_vol.values)
-            cortex_on_vol = []
-            mask = (np.stack(cortex_on_time_vols, axis=2)).squeeze()
-            cortex_on_vol.append((study, mask))
-        return cortex_on_vol
+    # def cortex_on_mdr(cortex_vol=None, roi=None):
+
+    # study = cortex_vol[0]
+    # mdr_aligned = [entry for entry in database if entry[3][0].strip().lower() == f'dce_9_mdr_{roi}_aligned'.lower()]
+    # for series in mdr_aligned:
+    #     vols = db.volumes_2d(series, dims=['AcquisitionTime'])
+    #     cortex_on_time_vols = []
+    #     for vol in vols:
+    #         vol_t = vreg.volume(vol.values[:,:,0,:], vol.affine) 
+    #         cortex_on_time_vol = cortex_vol[1].slice_like(vol_t)
+    #         cortex_on_time_vols.append(cortex_on_time_vol.values)
+    #     cortex_on_vol = []
+    #     mask = (np.stack(cortex_on_time_vols, axis=2)).squeeze()
+    #     cortex_on_vol.append((study, mask))
+    # return cortex_on_vol
 
 
-    
-    def extract_labels(roi=None):
-        # cortex + medulla 
-        # data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients")
-        # database = db.series(data_dir)
-        
-        # whole kidney
-        data_dir = os.path.join(os.getcwd(), 'build', 'kidneyvol_3_edit', site, "Patients")
-        database = db.series(data_dir)        
+    def extract_labels(roi=None, times_inventory=None):
+
+        database = db.series(mask_dir)        
         
         if roi == 'LK':
             #inventory = [entry for entry in database if entry[3][0].strip().lower() == 'dce_10_lkm'.lower()]
             inventory = [entry for entry in database if entry[3][0].strip().lower() == 'kidney_masks'.lower()]
+            if site == 'Bordeaux':
+                masks_inventory = [entry for entry in inventory if entry[2][0] == 'Baseline']
         elif roi == 'RK':
             #inventory = [entry for entry in database if entry[3][0].strip().lower() == 'dce_10_rkm'.lower()]
             inventory = [entry for entry in database if entry[3][0].strip().lower() == 'kidney_masks'.lower()]
-
+            if site == 'Bordeaux':
+                masks_inventory = [entry for entry in inventory if entry[2][0] == 'Baseline']
         
         labels = []
-        for series in inventory:
-            case_id = series[1]
-            vol = db.volume(series)
+        for case_id, mdr_vols, times in times_inventory:
+            mask = None
+            mask = next(m for m in masks_inventory if m[1] == case_id)
+            if mask is None:
+                print(f'No mask found for {case_id}. Skipping')
+                continue
+            vol = db.volume(mask)
             arr = vol.values
             aff = vol.affine 
             lk = (arr == 1)
@@ -703,152 +769,146 @@ def extract_mdr_input_function(site, roi=None):
             rk = (arr == 2)
             rk_voxels = np.sum(rk)
             voxel_size = 1.25*1.25*1.5 # pixel_spacing x slice_thickness
-            lk_vol = lk_voxels*voxel_size/1000 #convert to ml
-            rk_vol = rk_voxels*voxel_size/1000
+            lk_vol_size = lk_voxels*voxel_size/1000 #convert to ml
+            rk_vol_size = rk_voxels*voxel_size/1000
             if roi == 'LK':
-                vol = vreg.volume(lk, aff)
+                mask_vol = vreg.volume(lk, aff)
             elif roi == 'RK':
-                vol = vreg.volume(rk, aff)
-            labels.append((case_id, vol))
-        return labels, rk_vol, lk_vol 
+                mask_vol = vreg.volume(rk, aff)
+            labels.append((case_id, mdr_vols, times, mask_vol, lk_vol_size, rk_vol_size))
+        return labels
+
+    def mask_on_mdr(inventory=None):
+        new_inv = []
+        for case_id, mdr_vols, times, mask_vol, lk_size, rk_size in tqdm(inventory, desc=f'Batch No {batch_no}: Building mdr mask', unit='case'):
+            mask_on_time_vols = []
+            for vol in mdr_vols:
+                vol_t = vreg.volume(vol.values[:,:,0,:], vol.affine) 
+                mask_on_time_vol = mask_vol.slice_like(vol_t)
+                mask_on_time_vols.append(mask_on_time_vol.values)
+            mdr_mask = np.stack(mask_on_time_vols, axis=2)
+            new_inv.append((case_id, mdr_vols, mdr_mask, times, lk_size, rk_size))
+            print('MDR mask created! Adding to inventory')
+        return new_inv
 
     print('Extracting Times...')
-    case_id_and_times = extract_times(roi=roi)
+    times_inventory = extract_times(roi=roi)
 
     print('Extracting Labels to Align...')
-    labels, rk_vol, lk_vol = extract_labels(roi=roi)
+    inventory_w_labels = extract_labels(roi=roi, times_inventory=times_inventory)
+    
+    print('Matching Mask Shape with MDR...')
+    inventory = mask_on_mdr(inventory_w_labels)
 
     # for label in tqdm(labels, desc=f'Processing {roi} Cortex Masks', unit="label"):
-    #     cortex_masks_on_mdr = cortex_on_mdr(cortex_vol=label, roi=roi)
+    #     masks_on_mdr = mask_on_mdr(case_id, cortex_vol=vol, roi=roi)
     
 
 
-    if not isinstance(case_id_and_times, Iterable) or isinstance(case_id_and_times, str):
-        case_id_and_times = [case_id_and_times]
+    if not isinstance(inventory, Iterable) or isinstance(inventory, str):
+        inventory = [inventory]
 
     
     print(f'Getting {roi} values')
-    for times in tqdm(case_id_and_times, unit='case'):
-
-        case_id = times[0]
-        data_dir = os.path.join(os.getcwd(), 'build', 'dce_10_roi_analysis', site, "Patients", )
-        csv_dir = data_dir + '/CSV' + f'/{case_id}'
-        dmr_dir = data_dir + '/DMR' + f'/{case_id}'
-        os.makedirs(csv_dir, exist_ok=True)
+    mdr_mask = None
+    for case_id, mdr_vols, mdr_mask, times, lk_size, rk_size in tqdm(inventory, unit='case'):
+        if mdr_mask is None:
+            print(f"""
+                    Could not find mdr mask in inventory. See below.
+                    - mdr_vol shape: {mdr_vols.shape}
+                    - mdr_mask: {mdr_mask}
+                """)
+        
+        dmr_dir = dest_dir + '/DMR'
         os.makedirs(dmr_dir, exist_ok=True)
-        database = db.series(data_dir)
-        mdr_aligned_database = [entry for entry in database if entry[3][0].strip().lower() == f'dce_9_mdr_{roi}_aligned'.lower()]
         
-        mdr_aligned_series = next(img for img in mdr_aligned_database if img[1] == case_id)
-        
-        if mdr_aligned_series is None:
-            print(f'No aligned {roi} mdr series found')
-            continue
-        
-        if roi == 'LK':
-            mask = next(m for m in lk_vol if m[0] == case_id)
-        else:
-            tqdm.write(f'No lk mask found for case {case_id}')
-        
-        if roi == 'RK':
-            mask = next(m for m in lk_vol if m[0] == case_id)
-        else:
-            tqdm.write(f'No rk mask found for case {case_id}')       
-        
-        if mask is not None:
-            # get 4D volume: (x, y, z, t)
-            volume = db.volumes_2d(mdr_aligned_series, dims=['AcquisitionTime'])
+        if site in ('Sheffield', 'Bordeaux'):
             mdr_vol = []
-            for vol in volume:
+            for vol in mdr_vols:
                 vol_arr = vol.values
                 mdr_vol.append(vol_arr)
             mdr_vol = (np.stack(mdr_vol, axis=2)).squeeze()
 
+        # make sure mask is 3D (x, y, z)
+        if mdr_mask.ndim == 4:
+            mask = mdr_mask[..., 0] 
 
-            # make sure mask is 3D (x, y, z)
-            if mask[1].ndim == 4:
-                mask_3d = mask[1][..., 0] 
-                voxels = np.sum(mask_3d==2)
-                kidney_vol = voxels * 1.5 * 1.25 * 1.25 /1000
+        elif mask.ndim == 3:
+            mask = mdr_mask
+            
+        mask = mask.astype(bool)
+        slice_means = []
+            # compute slice-wise mean intensities for each timepoint
+        for t in range(mdr_vol.shape[-1]):  # loop over time frames
+            t_means = []
+            for z in range(mdr_vol.shape[2]):  # loop over slices
+                masked_values = mdr_vol[:, :, z, t][mask[:, :, z]]
+                t_means.append(masked_values.mean() if masked_values.size > 0 else np.nan)
+            slice_means.append(t_means)
 
-            else:
-                mask[1]
-                
-            mask = mask_3d.astype(bool)
-            slice_means = []
-             # compute slice-wise mean intensities for each timepoint
-            for t in range(mdr_vol.shape[-1]):  # loop over time frames
-                t_means = []
-                for z in range(mdr_vol.shape[2]):  # loop over slices
-                    masked_values = mdr_vol[:, :, z, t][mask[:, :, z]]
-                    t_means.append(masked_values.mean() if masked_values.size > 0 else np.nan)
-                slice_means.append(t_means)
+        # average across slices (shape: n_timepoints,)
+        intensities = np.nanmean(slice_means, axis=1)
 
-            # average across slices (shape: n_timepoints,)
-            cif_int = np.nanmean(slice_means, axis=1)
-        else: 
-            print(f'no {roi} mask found in database for {case_id} below')
-            continue
-
-    
         # Ensure same length as curve
-        if len(times[1]) != len(cif_int):
-            print(f"Length mismatch for {case_id}: times={len(times[1])}, curve={len(cif_int)}")
+        if len(times) != len(intensities):
+            print(f"Length mismatch for {case_id}: times={len(times)}, curve={len(intensities)}")
             continue
     
         # Convert curve to plain floats
-        cif_int = [float(val) for val in cif_int]
+        intensities = [float(val) for val in intensities]
     
         # Build dataframe
         df = pd.DataFrame({
-        "Time (s)": times[1],
-        "MIF Intensity": cif_int
+        "Time (s)": times,
+        f"{roi}IF": intensities
         })
 
         if roi == 'LK':
-            kid_vol = lk_vol.tolist()
+            kid_vol = lk_size
             r = 'kidney_left'
         elif roi == 'RK':
-            kid_vol = rk_vol.tolist()
+            kid_vol = rk_size
             r = 'kidney_right'
         study = 'Baseline'
-    
-        # Save CSV
-        outpath = os.path.join(csv_dir, f"{case_id}_{r}_if.csv")
-        df.to_csv(outpath, index=False)
 
-        print(f"Saved {r} intensity values for {case_id} {outpath}")
+        dmr_file = os.path.join(dmr_dir, f"{case_id}_{r}")
+        
+        dmr_zip = dmr_file + '.dmr.zip'
+        if os.path.exists(dmr_zip):
+            print(f'{case_id}_{r} IF DMR  already in folder! Skipping')
+            continue
 
-        dmr_file = os.path.join(dmr_dir, f"{case_id}_{r}_if")
         dmr = {'data':{}, 'pars':{}, 'rois':{}}
-        dmr['rois'][(case_id, study, 'time')] = times[1]
-        dmr['rois'][(case_id, study, 'signal')] = cif_int
-        dmr['pars'][(case_id, study, 'field_strength')] = 3
-        dmr['pars'][(case_id, study, 'agent')] = 'gadoterate' 
-        dmr['pars'][(case_id, study, 'n0')] = 15
-        dmr['pars'][(case_id, study, 'TR')] = 0.002
-        dmr['pars'][(case_id, study, 'FA')] = 10
-        dmr['pars'][(case_id, study, f'{r} vol')] = kid_vol
-        dmr['pars'][(case_id, study, f'{r} T1')] = 1.4
-        dmr['data']['time'] = ['Acquisition time', 'sec', 'float']
-        dmr['data']['signal'] = ['Average signal intensity', 'a.u.', 'float']
-        dmr['data']['field_strength'] = ['B0 magnetic field strength', 'T', 'float']
-        dmr['data']['agent'] = ['Contrast agent generic name', '', 'str']
-        dmr['data']['n0'] = ['Number of precontrast acquisition', '', 'int']
-        dmr['data']['TR'] = ['Repetition Time', 'sec', 'float']
-        dmr['data']['FA'] = ['Flip angle', 'deg', 'float']
-        dmr['data'][f'{r} vol'] = ['Kidney volume', 'mL', 'float']
-        dmr['data'][f'{r} T1'] = ['Kidney T1 relaxation time', 'sec', 'float']
+        dmr['rois'][(f"{case_id}_{r}", study, 'time')] = times
+        dmr['rois'][(f"{case_id}_{r}", study, 'signal')] = intensities
+        dmr['pars'][(f"{case_id}_{r}", study, 'field_strength')] = 3
+        dmr['pars'][(f"{case_id}_{r}", study, 'agent')] = 'gadoterate' 
+        dmr['pars'][(f"{case_id}_{r}", study,  'n0')] = 15
+        dmr['pars'][(f"{case_id}_{r}", study, 'TR')] = 0.002
+        dmr['pars'][(f"{case_id}_{r}", study, 'FA')] = 10
+        dmr['pars'][(f"{case_id}_{r}", study, 'vol')] = kid_vol
+        dmr['pars'][(f"{case_id}_{r}", study,  'T1')] = 1.4
+        
+        dmr['data'][('time')] = ['Acquisition time', 'sec', 'float']
+        dmr['data'][('signal')] = ['Average signal intensity', 'a.u.', 'float']
+        dmr['data'][('field_strength')] = ['B0 magnetic field strength', 'T', 'float']
+        dmr['data'][('agent')] = ['Contrast agent generic name', '', 'str']
+        dmr['data'][('n0')] = ['Number of precontrast acquisition', '', 'int']
+        dmr['data'][('TR')] = ['Repetition Time', 'sec', 'float']
+        dmr['data'][('FA')] = ['Flip angle', 'deg', 'float']
+        dmr['data'][('vol')] = ['Kidney volume', 'mL', 'float']
+        dmr['data'][('T1')] = ['Kidney T1 relaxation time', 'sec', 'float']
         pydmr.write(dmr_file, dmr)
+        print(f'{case_id}_{r} input function DMR saved to folder!')
     
 
 
 if __name__ == '__main__':
     #get_data('Bari')
-    batch_no = [1,2,3,4,5,6,7,8,9]
+    batch_no = [2,3,4,5,6,7,8,9]
     for no in batch_no:
-        fillgaps('Sheffield', batch_no=no)
-    # roi = ['RK', 'LK']
-    # for m in roi:
-    # #     #     cortex_medulla('Bari', study='1128_003', roi=m)
-    #     extract_mdr_input_function('Bari', roi=m)
+        #fill_aligned_mdr('Bordeaux', batch_no=no)
+        roi = ['RK', 'LK']
+        for m in roi:
+        # #     cortex_medulla('Bari', study='1128_003', roi=m)
+            extract_mdr_input_function('Bordeaux', roi=m, batch_no=no)

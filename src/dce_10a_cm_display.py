@@ -17,6 +17,8 @@ import pickle
 import matplotlib.pyplot as plt
 import matplotlib
 import logging
+import imageio.v2 as imageio  # Use v2 interface for compatibility
+from moviepy import VideoFileClip 
 
 
 
@@ -36,6 +38,56 @@ def get_distinct_colors(rois, colormap='jet'):
 
     return colors
 
+def movie_overlay(img, rois, file):
+
+    # Define RGBA colors (R, G, B, Alpha) — alpha controls transparency
+    colors = get_distinct_colors(rois, colormap='tab20')
+
+    # Directory to store temporary frames
+    tmp = os.path.join(os.getcwd(), 'tmp')
+    os.makedirs(tmp, exist_ok=True)
+    filenames = []
+
+    # Generate and save a sequence of plots
+    for i in tqdm(range(img.shape[2]), desc='Building animation..'):
+
+        # Set up figure
+        fig, ax = plt.subplots(
+            figsize=(5, 5),
+            dpi=300,
+        )
+
+        # Display the background image
+        vmin = 0
+        vmax = 200
+        ax.imshow(img[:,:,i].T, cmap='gray', interpolation='none', vmin=vmin, vmax=vmax) #np.mean(img) + 2 * np.std(img))
+
+        # Overlay each mask
+        for mask, color in zip([m.astype(bool) for m in rois], colors):
+            rgba = np.zeros((img.shape[0], img.shape[1], 4), dtype=float)
+            for c in range(4):  # RGBA
+                rgba[..., c] = mask[:,:,i] * color[c]
+            ax.imshow(rgba.transpose((1,0,2)), interpolation='none')
+
+        # Save eachg image to a tmp file
+        fname = os.path.join(tmp, f'frame_{i}.png')
+        fig.savefig(fname)
+        filenames.append(fname)
+        plt.close(fig)
+
+    # Create GIF
+    print('Creating movie')
+    gif = os.path.join(tmp, 'movie.gif')
+    with imageio.get_writer(gif, mode="I", duration=0.2) as writer:
+        for fname in filenames:
+            image = imageio.imread(fname)
+            writer.append_data(image)
+
+    # Load gif
+    clip = VideoFileClip(gif)
+
+    # Save as MP4
+    clip.write_videofile(file, codec='libx264')
 
 def mosaic_overlay(img, rois, file, colormap='tab20', aspect_ratio=16/9, margin=[15,5,2], show=False):
 
@@ -111,13 +163,15 @@ def mosaic_overlay(img, rois, file, colormap='tab20', aspect_ratio=16/9, margin=
             col.axis("off")
 
             # Display the background image
+            vmin = 0
+            vmax = 200
             if z0+i < img.shape[2]:
                 col.imshow(
                     img[x0:x1+1, y0:y1+1, z0+i].T, 
                     cmap='gray', 
                     interpolation='none', 
-                    vmin=0, 
-                    vmax=np.mean(img) + 2 * np.std(img),
+                    vmin=vmin, 
+                    vmax=vmax
                 )
 
             # Overlay each mask
@@ -220,6 +274,7 @@ def overlay(site, roi, batch_no=None):
             logging.error(f'cannot display map for case {case_id}:{e}')
 
         mask_png = os.path.join(mask_png_dir, f'{case_id}.png')
+        movie_mp4 = os.path.join(mask_png_dir, f'{case_id}.mp4')
         
         lkc_arr = None
         rkc_arr = None
@@ -260,10 +315,12 @@ def overlay(site, roi, batch_no=None):
             continue
 
         mosaic_overlay(img=_map_arr, rois=masks, file=mask_png, show=False)
-
+        #movie_overlay(img=_map_arr, rois=masks, file=movie_mp4)
 
 
 if __name__ == '__main__':
     roi=['lk'] #choose any map
-    for r in roi:
-        overlay('Sheffield', roi=r, batch_no=1)
+    batch_no = list(range(1, 10))
+    for no in batch_no:
+        for r in roi:
+            overlay('Bordeaux', roi=r, batch_no=no)

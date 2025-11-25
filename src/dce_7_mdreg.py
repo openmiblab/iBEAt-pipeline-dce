@@ -34,10 +34,12 @@ def load_database(site):
         images.append((study[1], study, volume))
     return images
 
-def load_aif(site):
+def load_aif(site, batch_no=None):
 
-    csv_path = os.path.join(os.getcwd(), 'build', 'dce_5_aorta2csv', site, "Patients")
-
+    csv_database = [os.getcwd(), 'build', 'dce_5_aorta2csv', site, "Patients"]
+    if batch_no is not None:
+        csv_database.append(f"Batch_{batch_no}")
+    csv_path = os.path.join(*csv_database)
 
     csv_files = [f for f in os.listdir(csv_path) if f.endswith("_aif.csv")]
     if not csv_files:
@@ -235,8 +237,16 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
         # WORKING CASE - BEGIN MDREG
         study = entry['study']
         iteration = entry['iteration'] 
-        times_and_aif = load_aif(site)
-        aif = next((v for v in times_and_aif if v[0] == case), None)
+        times_and_aif = load_aif(site, batch_no=batch_no)
+        if site == 'Bordeaux':
+            try:
+                aif = next(v for v in times_and_aif if v[0] in case)
+                print(f'Loading aif for case {case}')
+            except:
+                print(f'No matching aif for case {case}, otherwise different batch. Skipping...')
+                continue
+        else:    
+            aif = next((v for v in times_and_aif if v[0] == case), None)
         time = aif[1].tolist()
         aif_values = aif[2].tolist()
         
@@ -267,6 +277,13 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
                 'time': time,
                 'baseline': 15
             }
+        
+        fit_ants = {
+            'package': 'ants',
+            'type_of_transform': 'SyNOnly',
+            'parallel': False,
+            'progress_bar': True,  
+        } 
    
         for iter_num in range(iteration + 1, maximum_it + 1):
             tqdm.write(f'Processing {case}, Iteration={iter_num}')
@@ -279,6 +296,7 @@ def _mdr_2d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
 
                 coreg, model_fit, defo, pars = mdreg.fit(
                     moving=array,
+                    fit_coreg=fit_ants,
                     fit_image=fit_image,
                     force_2d=True,
                     maxit=1,
@@ -382,6 +400,8 @@ def _mdr_3d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
                 'n0': 15,
                 'tol': 0.2,
             }
+        
+        # Coregistration options
         fit_skimage = {
                 'package': 'skimage',
                 'attachment': 10,
@@ -389,7 +409,6 @@ def _mdr_3d(site, batch_no=None, maximum_it=5, start_case=0, end_case=None):
                 'progress_bar': True,  
             }
         
-            # # Coregistration options
         fit_ants = {
             'package': 'ants',
             'type_of_transform': 'SyNOnly',
@@ -463,7 +482,7 @@ def write_2_folder(site, batch_no=None):
     else:
         print('No existing MDR Table to process')
 
-    base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients")
+    base_dir = os.path.join(os.getcwd(), 'build', 'dce_7_mdreg', site, "Patients", f'Batch_{batch_no}')
     os.makedirs(base_dir, exist_ok=True)
     
 
@@ -524,8 +543,8 @@ def write_2_folder(site, batch_no=None):
             if model_fit_path:
                 model_fit = np.load(model_fit_path)
             #print('mf:', model_fit.shape)
-            if defo_path:
-                defo = np.load(defo_path)
+            # if defo_path:
+            #     defo = np.load(defo_path)
             #print('defo:', defo.shape)
 
             if model_fit is not None and model_fit.ndim > 5:
@@ -533,7 +552,7 @@ def write_2_folder(site, batch_no=None):
                 print(f'Checkpoint outputs Defo and Model fit are swapped for case {case}. Please Check. Switching...')
 
             # Extract metadata from image
-            if site =='Bari':
+            if site == 'Bari' :
                 image = db.volume(study, 'AcquisitionTime')
                 if image is not None:
                     affine = image.affine
@@ -617,16 +636,16 @@ def write_2_folder(site, batch_no=None):
 
 if __name__ == '__main__':
     #Step: 1 - Prep DCE
-    #dce_to_process('Sheffield')
+    #dce_to_process('Bordeaux', batch_no=101)
 
     #Step: 2 - 2D/3D MDREG 
-    #_mdr_2d('Bordeaux')
+    #_mdr_2d('Bordeaux', batch_no=100)
     #_mdr_3d('Sheffield')
 
 
-    #Optional - Recommended if running in batches, before writing files to DICOM
-    rebuild_mdr_table('Sheffield')
+    # #Optional - Recommended if running in batches, before writing files to DICOM
+    #rebuild_mdr_table('Bordeaux', batch_no=100)
 
-    # Step 3 - Write Files to DICOM
-    write_2_folder('Sheffield')
+    # # Step 3 - Write Files to DICOM
+    write_2_folder('Bordeaux', 100)
 
